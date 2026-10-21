@@ -67,9 +67,9 @@ async function boot() {
 function showLogin() {
   app.innerHTML = `<div class="card stack" style="max-width:440px;margin:40px auto">
     <div class="eyebrow">Stellar · Draft review</div><h1>Sign in</h1>
-    <p class="muted" style="margin:0">Enter your Stellar email and we'll send you a 6-digit code.</p>
+    <p class="muted" style="margin:0">Enter your Stellar email and we'll send you a sign-in code.</p>
     <form id="lf" class="stack"><input type="email" id="em" placeholder="you@stellarmusic.dk" required autocomplete="email"><button style="width:100%;justify-content:center">Send code</button></form>
-    <form id="cf" class="stack hidden"><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" maxlength="6" required><button style="width:100%;justify-content:center">Sign in</button></form>
+    <form id="cf" class="stack hidden"><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Code from the email" maxlength="12" required><button style="width:100%;justify-content:center">Sign in</button></form>
     <div id="lm"></div></div>`;
   let email = "";
   const msg = (h) => document.getElementById("lm").innerHTML = h;
@@ -91,7 +91,7 @@ function showLogin() {
   };
   document.getElementById("cf").onsubmit = async (e) => {
     e.preventDefault();
-    const token = document.getElementById("code").value.trim();
+    const token = document.getElementById("code").value.replace(/\D/g, "");
     let { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
     if (error) ({ error } = await sb.auth.verifyOtp({ email, token, type: "magiclink" }));
     if (error) return msg(`<div class="error">That code didn't work. Check it, or go back and request a new one.</div>`);
