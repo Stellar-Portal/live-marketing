@@ -7,6 +7,21 @@
 <title>Your upload page · Stellar</title>
 <link rel="stylesheet" href="style.css">
 <script src="config.js"></script>
+<style>
+  .top { margin-bottom: 20px; }
+  .brand { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; color: var(--accent); margin-bottom: 14px; }
+  .brief { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; white-space: pre-wrap; font-size: 14px; margin-bottom: 16px; }
+  .stats.mini { margin-bottom: 16px; }
+  .stats.mini .stat { padding: 10px 14px; }
+  .stats.mini .stat b { font-size: 20px; }
+  .slots > * + * { margin-top: 12px; }
+  .slot { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
+  .slot-head { display: flex; align-items: center; gap: 14px; }
+  .slot-thumb { width: 44px; height: 78px; object-fit: cover; border-radius: 6px; flex: none; background: #000; }
+  .slot-thumb.empty { background: var(--soft); border: 1px solid var(--line); color: var(--muted); display: grid; place-items: center; font-weight: 700; font-size: 18px; }
+  .slot-title { flex: 1; min-width: 0; }
+  .slot-title .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
 <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"></script>
 </head>
 <body>
@@ -49,20 +64,23 @@ async function load() {
 
 const STATUS_LABEL = {
   empty: "Not uploaded", pending: "Waiting for review", changes_requested: "Changes requested",
-  approved: "Approved – post it!", posted: "Live on TikTok",
+  approved: "Approved", posted: "Live on TikTok",
 };
 
 function render() {
   const { creator, campaign, slots } = state;
   const first = esc((creator.name || "").split(" ")[0]);
-  let html = `<div class="eyebrow">Stellar · ${esc(campaign.name)}</div>
-    <h1>Hi ${first} 👋</h1>`;
-  if (campaign.brief) html += `<div class="note small" style="white-space:pre-wrap">${esc(campaign.brief)}</div>`;
+  let html = `<header class="top">
+      <div class="brand">${STAR} Stellar</div>
+      <h1>Hi ${first}</h1>
+      <p class="muted" style="margin:0">Your page for the <b style="color:var(--ink)">${esc(campaign.name)}</b> campaign.</p>
+    </header>`;
+  if (campaign.brief) html += `<div class="brief">${esc(campaign.brief)}</div>`;
 
   if (!creator.locked) {
-    html += `<div class="card stack" style="margin-top:18px">
+    html += `<div class="card stack">
       <div><h2>How many videos will you make?</h2>
-      <p class="muted small" style="margin:0">Choose up to 3. Once you confirm, this number is locked and you'll ${campaign.drafts_enabled ? "upload exactly that many drafts" : "send exactly that many TikTok links"}.</p></div>
+      <p class="muted small" style="margin:4px 0 0">Choose up to 3. Once you confirm, the number is locked and you'll ${campaign.drafts_enabled ? "upload exactly that many drafts" : "send exactly that many TikTok links"}.</p></div>
       <div class="choice">
         ${[1,2,3].map(n => `<button type="button" data-n="${n}">${n}<span>${n === 1 ? "video" : "videos"}</span></button>`).join("")}
       </div>
@@ -89,71 +107,81 @@ function render() {
 
   const live = slots.filter(s => s.status === "posted").length;
   const approved = slots.filter(s => ["approved","posted"].includes(s.status)).length;
-  html += `<p class="muted" style="margin:4px 0 18px">You committed to <b>${creator.video_count}</b> video${creator.video_count > 1 ? "s" : ""}${campaign.drafts_enabled ? ` · ${approved} approved` : ""} · ${live} live on TikTok</p>`;
-  if (!campaign.drafts_enabled) html += `<div class="note small" style="margin-bottom:14px">Post each video on TikTok, then paste its link below. Tip: in TikTok tap <b>Share → Copy link</b>.</div>`;
+  html += `<div class="stats mini" style="grid-template-columns:repeat(${campaign.drafts_enabled ? 3 : 2},1fr)">
+      <div class="stat"><b>${creator.video_count}</b><span>Committed</span></div>
+      ${campaign.drafts_enabled ? `<div class="stat"><b>${approved}</b><span>Approved</span></div>` : ""}
+      <div class="stat"><b>${live}</b><span>Live on TikTok</span></div>
+    </div>`;
+  if (!campaign.drafts_enabled) html += `<div class="note small">Post each video on TikTok, then paste its link below. In TikTok, tap Share, then Copy link.</div>`;
 
-  html += `<div class="stack">` + slots.map(slotCard).join("") + `</div>`;
-  html += `<p class="muted small center" style="margin-top:28px">Questions? Reply to the email you got from us.<br>This page is personal to you – please don't share the link.</p>`;
+  html += `<div class="slots">` + slots.map(slotCard).join("") + `</div>`;
+  html += `<p class="muted small center" style="margin-top:32px">Questions? Reply to the email you got from us.<br>This page is personal to you, so please don't share the link.</p>`;
   app.innerHTML = html;
   bindSlots();
 }
 
-const thumbImg = (v) => v?.thumb_url
-  ? `<div class="row small muted" style="flex-wrap:nowrap"><img src="${esc(v.thumb_url)}" alt="" style="width:64px;border-radius:8px;border:1px solid var(--line);flex:none"><span>${esc(v.file_name || "")}<br>uploaded ${fmtDate(v.uploaded_at)}</span></div>` : "";
+const STAR = `<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-2px"><path fill="currentColor" d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z"/></svg>`;
+
+// small vertical thumbnail (or the video number when there's none yet)
+const thumbBox = (n, v) => v?.thumb_url
+  ? `<img class="slot-thumb" src="${esc(v.thumb_url)}" alt="Video ${n}">`
+  : `<div class="slot-thumb empty">${n}</div>`;
+
+const linkForm = (n, s) => `<form class="row" data-link="${n}" style="flex-wrap:nowrap">
+    <input type="url" inputmode="url" placeholder="Paste your TikTok link" value="${s.status === "posted" ? esc(s.tiktok_url) : ""}" required>
+    <button type="submit">${s.status === "posted" ? "Update" : "Send"}</button></form>
+  <div data-linkerr="${n}"></div>`;
 
 function slotCard(s) {
   const n = s.slot_no;
   const last = s.versions[s.versions.length - 1];
   const up = uploading[n];
-  let body = "";
+  const drafts = state.campaign.drafts_enabled;
+  let body = "", pill, sub = "";
 
-  if (!state.campaign.drafts_enabled && !up) {
-    // no review step: straight to the TikTok link
-    if (s.status === "posted") body += `<p style="margin:0" class="small">Your TikTok: <a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">${esc(s.tiktok_url)}</a></p>`;
-    body += `<form class="row" data-link="${n}" style="flex-wrap:nowrap">
-      <input type="url" inputmode="url" placeholder="https://www.tiktok.com/@you/video/…" value="${s.status === "posted" ? esc(s.tiktok_url) : ""}" required>
-      <button type="submit">${s.status === "posted" ? "Update" : "Send"}</button></form>
-      <div data-linkerr="${n}"></div>`;
-    return `<section class="card stack" id="slot${n}">
-      <div class="row spread"><h2 style="margin:0">Video ${n}</h2><span class="pill s-${s.status === "posted" ? "posted" : "empty"}">${s.status === "posted" ? "Live on TikTok" : "Link needed"}</span></div>
-      ${body}</section>`;
-  }
-
-  if (up) {
-    body = `<div class="stack">
-      <div class="row spread small"><span>Uploading <b>${esc(up.name)}</b></span><span id="pct${n}">${up.pct}%</span></div>
-      <div class="progress"><i id="bar${n}" style="width:${up.pct}%"></i></div>
-      <p class="muted small" style="margin:0">Keep this page open. If your connection drops, it will continue where it stopped.</p>
-      <button class="ghost sm" data-cancel="${n}">Cancel</button></div>`;
-  } else if (s.status === "empty" || s.status === "changes_requested") {
-    if (s.status === "changes_requested" && last?.feedback) {
-      body += `${thumbImg(last)}<div><div class="small muted" style="margin-bottom:6px">Feedback on version ${last.version_no} (${esc(last.file_name || "your video")}):</div><div class="feedback">${esc(last.feedback)}</div></div>`;
+  if (!drafts && !up) {
+    pill = s.status === "posted" ? `<span class="pill s-posted">Live on TikTok</span>` : `<span class="pill s-empty">Link needed</span>`;
+    sub = s.status === "posted" ? `<a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">Open on TikTok</a>` : "Post it, then paste the link";
+    body = linkForm(n, s);
+  } else {
+    pill = `<span class="pill s-${up ? "pending" : s.status}">${up ? "Uploading" : STATUS_LABEL[s.status]}</span>`;
+    if (last) sub = `${esc(last.file_name || "")}${last.version_no > 1 ? `, version ${last.version_no}` : ""}`;
+    if (up) {
+      sub = esc(up.name);
+      body = `<div class="stack">
+        <div class="row spread small"><span class="muted">Keep this page open while it uploads.</span><b id="pct${n}">${up.pct}%</b></div>
+        <div class="progress"><i id="bar${n}" style="width:${up.pct}%"></i></div>
+        <div><button class="ghost sm" data-cancel="${n}">Cancel</button></div></div>`;
+    } else if (s.status === "empty" || s.status === "changes_requested") {
+      if (s.status === "changes_requested" && last?.feedback) {
+        body += `<div class="feedback"><div class="small" style="font-weight:600;margin-bottom:4px">Feedback from Stellar</div>${esc(last.feedback)}</div>`;
+      }
+      body += `<label class="drop" data-drop="${n}">
+        <input type="file" accept="video/*" data-file="${n}" class="hidden">
+        <b>${s.status === "changes_requested" ? "Upload a new draft" : "Upload your draft"}</b>
+        <div class="muted small" style="margin-top:2px">MP4 or MOV, up to 1 GB</div></label>`;
+    } else if (s.status === "pending") {
+      body = `<p class="muted small" style="margin:0">Sent ${fmtDate(last?.uploaded_at)}. We'll email you as soon as it's reviewed.</p>`;
+    } else if (s.status === "approved" || s.status === "posted") {
+      if (last?.feedback) body += `<div class="note small"><b>Note from Stellar:</b> ${esc(last.feedback)}</div>`;
+      if (s.status === "approved") body += `<p class="small" style="margin:0">Approved. Post it on TikTok, then paste the link here.</p>`;
+      else body += `<p class="small" style="margin:0"><a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">Open your TikTok</a></p>`;
+      body += linkForm(n, s);
     }
-    body += `<label class="drop" data-drop="${n}">
-      <input type="file" accept="video/*" data-file="${n}" class="hidden">
-      <b>${s.status === "changes_requested" ? "Upload the new version" : "Upload your draft"}</b><br>
-      <span class="muted small">Tap to choose a video · MP4 or MOV · up to 1 GB</span></label>`;
-  } else if (s.status === "pending") {
-    body = `${thumbImg(last)}<div class="note small">We've got <b>${esc(last?.file_name || "your video")}</b> (version ${last?.version_no}, sent ${fmtDate(last?.uploaded_at)}). We'll email you as soon as it's reviewed.</div>`;
-  } else if (s.status === "approved" || s.status === "posted") {
-    body += thumbImg(last);
-    if (last?.feedback) body += `<div class="note small"><b>Note from the team:</b> ${esc(last.feedback)}</div>`;
-    if (s.status === "approved") body += `<p style="margin:0">Your draft is approved. Post it on TikTok, then paste the link here:</p>`;
-    else body += `<p style="margin:0" class="small">Your TikTok: <a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">${esc(s.tiktok_url)}</a></p>`;
-    body += `<form class="row" data-link="${n}" style="flex-wrap:nowrap">
-      <input type="url" inputmode="url" placeholder="https://www.tiktok.com/@you/video/…" value="${s.status === "posted" ? esc(s.tiktok_url) : ""}" required>
-      <button type="submit">${s.status === "posted" ? "Update" : "Send"}</button></form>
-      <div data-linkerr="${n}"></div>`;
   }
 
-  const hist = s.versions.length ? `<details><summary>History (${s.versions.length} version${s.versions.length > 1 ? "s" : ""})</summary><ul class="hist">${
-    s.versions.slice().reverse().map(v => `<li style="display:flex;gap:10px;align-items:flex-start">${v.thumb_url ? `<img src="${esc(v.thumb_url)}" alt="" style="width:40px;border-radius:4px;flex:none">` : ""}<span>v${v.version_no} · ${esc(v.file_name || "")} · ${fmtDate(v.uploaded_at)} · <b>${
+  const hist = drafts && s.versions.length > 1 ? `<details><summary>Earlier versions (${s.versions.length - 1})</summary><ul class="hist">${
+    s.versions.slice(0, -1).reverse().map(v => `<li class="row" style="flex-wrap:nowrap;align-items:flex-start">${v.thumb_url ? `<img src="${esc(v.thumb_url)}" alt="" style="width:32px;border-radius:4px;flex:none">` : ""}<span>Version ${v.version_no}, ${fmtDate(v.uploaded_at)}: <b>${
       v.review_status === "pending" ? "waiting" : v.review_status === "approved" ? "approved" : v.review_status === "skipped" ? "not needed" : "changes requested"}</b>${v.feedback ? `<br><span class="muted">${esc(v.feedback)}</span>` : ""}</span></li>`).join("")
   }</ul></details>` : "";
 
-  return `<section class="card stack" id="slot${n}">
-    <div class="row spread"><h2 style="margin:0">Video ${n}</h2><span class="pill s-${up ? "pending" : s.status}">${up ? "Uploading" : STATUS_LABEL[s.status]}</span></div>
-    ${body}${hist}</section>`;
+  return `<section class="card slot" id="slot${n}">
+    <div class="slot-head">
+      ${thumbBox(n, drafts ? last : null)}
+      <div class="slot-title"><h2>Video ${n}</h2>${sub ? `<div class="small muted">${sub}</div>` : ""}</div>
+      ${pill}
+    </div>
+    ${body ? `<div class="stack">${body}</div>` : ""}${hist}</section>`;
 }
 
 function bindSlots() {

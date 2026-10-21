@@ -8,16 +8,35 @@
 <link rel="stylesheet" href="style.css">
 <script src="config.js"></script>
 <style>
-  .review { display: grid; grid-template-columns: 340px 1fr; gap: 16px; align-items: start; }
-  .queue { max-height: calc(100vh - 220px); overflow-y: auto; padding: 0; }
-  .qi { display: block; width: 100%; text-align: left; background: none; color: var(--ink); border: none; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 14px; font-weight: 400; }
-  .qi:hover { background: #f8f7f3; }
-  .qi.on { background: #efede7; }
+  .review { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
+  .queue { max-height: calc(100vh - 230px); overflow-y: auto; padding: 6px; position: sticky; top: 16px; }
+  .qi { display: block; width: 100%; text-align: left; background: none; color: var(--ink); border: none; border-radius: 8px; padding: 10px 12px; font-weight: 400; }
+  .qi + .qi { margin-top: 2px; }
+  .qi:hover { background: var(--soft); filter: none; }
+  .qi.on { background: var(--accent-soft); }
   .qi b { font-weight: 600; }
-  video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; display: block; }
   .chips { display: flex; gap: 4px; flex-wrap: wrap; }
-  #detail video { max-height: 56vh; }
-  @media (max-width: 860px) { .review { grid-template-columns: 1fr; } .queue { max-height: 280px; } }
+  .head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .brand { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; color: var(--accent); }
+  .camps { display: inline-flex; gap: 2px; padding: 3px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; flex-wrap: wrap; }
+  .camps button { background: none; border: none; color: var(--muted); padding: 7px 12px; border-radius: 7px; font-size: 14px; }
+  .camps button:hover { color: var(--ink); filter: none; }
+  .camps button.on { background: var(--accent); color: #fff; }
+  .camps button .mode { font-weight: 500; opacity: .75; font-size: 12px; margin-left: 4px; }
+  /* review: compact video rows */
+  .vrow { display: grid; grid-template-columns: 120px 1fr; gap: 18px; padding: 16px 0; border-top: 1px solid var(--line); }
+  .vrow video, .vrow .novid { width: 120px; aspect-ratio: 9 / 16; object-fit: contain; background: #0c0f16; border-radius: 8px; display: block; }
+  .vrow .novid { display: grid; place-items: center; color: #9aa3b2; font-size: 12px; text-align: center; padding: 8px; }
+  .vinfo { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .vinfo textarea { min-height: 72px; }
+  .decision { border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+  .decision.ok { background: var(--ok-bg); color: #08402d; }
+  .decision.ch { background: var(--warn-bg); color: #4a3104; }
+  .sendbar { position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--line); margin: 0 -20px -20px; padding: 14px 20px; border-radius: 0 0 var(--radius) var(--radius); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .sendbar > span { flex: 1; min-width: 0; }
+  .sendbar button { flex: none; }
+  @media (max-width: 860px) { .review { grid-template-columns: 1fr; } .queue { max-height: 260px; position: static; } }
+  @media (max-width: 520px) { .vrow { grid-template-columns: 96px 1fr; gap: 12px; } .vrow video, .vrow .novid { width: 96px; } }
 </style>
 </head>
 <body>
@@ -90,7 +109,7 @@ async function boot() {
 
 function showLogin() {
   app.innerHTML = `<div class="card stack" style="max-width:440px;margin:40px auto">
-    <div class="eyebrow">Stellar · Draft review</div><h1>Sign in</h1>
+    <div class="brand" style="display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--accent)">Stellar drafts</div><h1>Sign in</h1>
     <p class="muted" style="margin:0">Enter your Stellar email and we'll send you a sign-in code.</p>
     <form id="lf" class="stack"><input type="email" id="em" placeholder="you@stellarmusic.dk" required autocomplete="email"><button style="width:100%;justify-content:center">Send code</button></form>
     <form id="cf" class="stack hidden"><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Code from the email" maxlength="12" required><button style="width:100%;justify-content:center">Sign in</button></form>
@@ -144,13 +163,15 @@ function renderShell() {
   const on = draftsOn();
   if (!on && tab === "review") tab = "links";
   app.innerHTML = `
-    <div class="row spread" style="margin-bottom:12px">
-      <div class="eyebrow">Stellar · Live Marketing</div>
-      <div class="row small muted">${esc(me.name)} · <a href="#" id="out">Sign out</a></div>
-    </div>
-    <div class="row" style="margin-bottom:16px;gap:8px">
-      ${campaigns.map(c => `<button class="${c.id === campaign?.id ? "" : "ghost"}" data-camp="${c.id}">${esc(c.name)}<span class="small" style="font-weight:500;opacity:.75">${c.drafts_enabled === false ? "· links only" : "· drafts"}</span></button>`).join("")}
-      <button class="ghost sm" id="newCamp" title="Add a campaign">+ New campaign</button>
+    <div class="head-row">
+      <div class="row" style="gap:16px">
+        <span class="brand"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z"/></svg>Stellar drafts</span>
+        <div class="camps">
+          ${campaigns.map(c => `<button class="${c.id === campaign?.id ? "on" : ""}" data-camp="${c.id}">${esc(c.name)}<span class="mode">${c.drafts_enabled === false ? "links only" : "drafts"}</span></button>`).join("")}
+          <button id="newCamp" title="Add a campaign">+ New</button>
+        </div>
+      </div>
+      <div class="small muted">${esc(me.name)}, <a href="#" id="out">sign out</a></div>
     </div>
     ${campaign ? `
     <div class="stats" style="margin-bottom:18px">
@@ -271,15 +292,15 @@ function renderReview() {
   if (!currentCid || !gs.find(g => g.creator.id === currentCid)) currentCid = (gs.find(g => !g.ready) || gs[0]).creator.id;
   pane.innerHTML = `
     <div class="row spread" style="margin-bottom:12px">
-      <span class="small muted">${gs.length} creator${gs.length === 1 ? "" : "s"} with drafts · ${gs.length - ready.length} still to decide · ${ready.length} ready to send</span>
+      <span class="small muted">${gs.length} creator${gs.length === 1 ? "" : "s"} with drafts, ${gs.length - ready.length} still to decide, ${ready.length} ready to send</span>
       <button id="sendAll" ${ready.length ? "" : "disabled"}>Send all ready (${ready.length})</button>
     </div>
     <div class="review">
       <div class="card queue">${gs.map(g => `
         <button class="qi ${g.creator.id === currentCid ? "on" : ""}" data-cid="${g.creator.id}">
           <div class="row spread" style="flex-wrap:nowrap"><b>${esc(g.creator.name)}</b>
-            ${g.ready ? `<span class="pill s-approved">Ready to send</span>` : g.decided ? `<span class="pill s-changes_requested">${g.decided}/${g.items.length} decided</span>` : `<span class="pill s-pending">${g.items.length} to review</span>`}</div>
-          <span class="small muted">${g.items.map(v => `V${v.slots.slot_no}${v.version_no > 1 ? ` (v${v.version_no})` : ""}`).join(", ")} · ${esc(g.creator.country || "")} · waiting ${ago(g.oldest)}</span>
+            ${g.ready ? `<span class="pill s-approved">Ready</span>` : g.decided ? `<span class="pill s-changes_requested">${g.decided}/${g.items.length}</span>` : `<span class="pill s-pending">${g.items.length} new</span>`}</div>
+          <span class="small muted">${[g.items.map(v => `Video ${v.slots.slot_no}${v.version_no > 1 ? ` (v${v.version_no})` : ""}`).join(", "), `waiting ${ago(g.oldest)}`].join(", ")}</span>
         </button>`).join("")}</div>
       <div class="card" id="detail"></div>
     </div>`;
@@ -308,33 +329,41 @@ async function renderCreatorDetail(g) {
     const url = urlCache[v.id];
     const earlier = hist.filter(h => h.slot_id === v.slot_id);
     const decided = v.decision
-      ? `<div class="${v.decision === "approve" ? "note" : "feedback"}" style="${v.decision === "approve" ? "background:var(--ok-bg)" : ""}">
-           <b>${v.decision === "approve" ? "✅ Approved" : "✏️ Changes requested"}</b>${v.decided_by ? ` <span class="small muted">· ${esc(v.decided_by)}</span>` : ""}
-           ${v.decision_feedback ? `<div style="margin-top:6px;white-space:pre-wrap">${esc(v.decision_feedback)}</div>` : ""}
+      ? `<div class="decision ${v.decision === "approve" ? "ok" : "ch"}">
+           <b>${v.decision === "approve" ? "Approved" : "Changes requested"}</b>${v.decided_by ? `<span class="small" style="opacity:.7"> by ${esc(v.decided_by)}</span>` : ""}
+           ${v.decision_feedback ? `<div style="margin-top:4px;white-space:pre-wrap">${esc(v.decision_feedback)}</div>` : ""}
          </div>
          <div><button class="ghost sm" data-undo="${v.id}">Change decision</button></div>`
-      : `<textarea data-fb="${v.id}" placeholder="Feedback for Video ${v.slots.slot_no} (required to request changes, optional when approving)">${esc(fbDrafts[v.id] || "")}</textarea>
+      : `<textarea data-fb="${v.id}" placeholder="Feedback (needed to request changes, optional when approving)">${esc(fbDrafts[v.id] || "")}</textarea>
          <div class="row"><button class="ok sm" data-approve="${v.id}">Approve</button><button class="bad sm" data-changes="${v.id}">Request changes</button></div>`;
-    return `<section class="stack" style="border-top:1px solid var(--line);padding-top:14px">
-      <div class="row spread"><div><b>Video ${v.slots.slot_no}</b> <span class="small muted">· version ${v.version_no}${v.version_no > 1 ? " (resubmission)" : ""} · uploaded ${fmt(v.uploaded_at)}</span></div>
-        ${url ? `<a class="btn ghost sm" style="padding:6px 10px;font-size:13px" href="${url}&download=${encodeURIComponent(v.file_name || "draft.mp4")}">Download</a>` : ""}</div>
-      ${url ? `<video src="${url}" controls playsinline preload="metadata"${v.thumb_path ? ` poster="${thumbPublic(v.thumb_path)}"` : ""}></video>` : `<div class="error small">Couldn't load this video.</div>`}
-      <div class="small muted">${esc(v.file_name || "")}</div>
-      ${earlier.length ? `<details><summary>Earlier versions (${earlier.length})</summary><ul class="hist">${earlier.map(h => `<li>v${h.version_no} · ${fmt(h.uploaded_at)} · <b>${h.review_status === "approved" ? "approved" : h.review_status === "skipped" ? "not needed" : "changes requested"}</b>${h.reviewed_by ? ` by ${esc(h.reviewed_by)}` : ""}${h.feedback ? `<br>${esc(h.feedback)}` : ""}</li>`).join("")}</ul></details>` : ""}
-      ${decided}
+    return `<section class="vrow">
+      <div>
+        ${url ? `<video src="${url}" controls playsinline preload="metadata"${v.thumb_path ? ` poster="${thumbPublic(v.thumb_path)}"` : ""}></video>` : `<div class="novid">Couldn't load the video</div>`}
+        ${url ? `<a class="small" style="display:inline-block;margin-top:6px" href="${url}&download=${encodeURIComponent(v.file_name || "draft.mp4")}">Download</a>` : ""}
+      </div>
+      <div class="vinfo">
+        <div>
+          <div class="row" style="gap:8px"><h2>Video ${v.slots.slot_no}</h2>${v.version_no > 1 ? `<span class="pill s-empty">Version ${v.version_no}</span>` : ""}</div>
+          <div class="small muted" style="overflow-wrap:anywhere">${esc(v.file_name || "")}, uploaded ${fmt(v.uploaded_at)}</div>
+        </div>
+        ${earlier.length ? `<details><summary>Earlier versions (${earlier.length})</summary><ul class="hist">${earlier.map(h => `<li>Version ${h.version_no}, ${fmt(h.uploaded_at)}: <b>${h.review_status === "approved" ? "approved" : h.review_status === "skipped" ? "not needed" : "changes requested"}</b>${h.reviewed_by ? ` by ${esc(h.reviewed_by)}` : ""}${h.feedback ? `<br>${esc(h.feedback)}` : ""}</li>`).join("")}</ul></details>` : ""}
+        ${decided}
+      </div>
     </section>`;
   };
 
   const undecided = g.items.length - g.decided;
-  d.innerHTML = `<div class="stack">
-    <div><h2 style="margin:0">${esc(c.name)}</h2>
-      <div class="small muted">${esc(c.country || "")}${handle ? ` · <a href="https://www.tiktok.com/@${esc(handle)}" target="_blank" rel="noopener">@${esc(handle)}</a>` : ""} · ${esc(c.email || "no email on file")}</div></div>
+  const firstName = esc(c.name.split(" ")[0]);
+  d.innerHTML = `
+    <div style="margin-bottom:4px">
+      <h2 style="font-size:20px">${esc(c.name)}</h2>
+      <div class="small muted">${[esc(c.country || ""), handle ? `<a href="https://www.tiktok.com/@${esc(handle)}" target="_blank" rel="noopener">@${esc(handle)}</a>` : "", esc(c.email || "no email on file")].filter(Boolean).join(", ")}</div>
+    </div>
     ${g.items.map(card).join("")}
-    <div class="small muted">If a video doesn't play in your browser (some iPhone .mov files), use Download.</div>
-    <div class="note stack" style="margin-top:6px">
-      <div class="small">${g.decided ? `<b>${g.decided} of ${g.items.length}</b> decided.` : "Nothing decided yet."} Nothing reaches ${esc(c.name.split(" ")[0])} until you press Send: then all decisions go out together in <b>one email</b>.${undecided && g.decided ? ` ${undecided} undecided video${undecided === 1 ? "" : "s"} will stay in the queue.` : ""}</div>
-      <div><button id="sendOne" ${g.decided ? "" : "disabled"}>Send ${g.decided ? `${g.decided} decision${g.decided === 1 ? "" : "s"} ` : ""}to ${esc(c.name.split(" ")[0])}</button></div>
-    </div></div>`;
+    <div class="sendbar">
+      <span class="small muted">${g.decided ? `${g.decided} of ${g.items.length} decided.` : "Nothing decided yet."} ${firstName} gets one email with every decision when you send.${undecided && g.decided ? ` Undecided videos stay in the queue.` : ""}</span>
+      <button id="sendOne" ${g.decided ? "" : "disabled"}>Send to ${firstName}</button>
+    </div>`;
 
   d.querySelectorAll("[data-fb]").forEach(t => t.oninput = () => { fbDrafts[t.dataset.fb] = t.value; });
   d.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => stage(b.dataset.approve, "approve"));
