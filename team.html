@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Draft review · Stellar</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<style>
+  .review { display: grid; grid-template-columns: 340px 1fr; gap: 16px; align-items: start; }
+  .queue { max-height: calc(100vh - 220px); overflow-y: auto; padding: 0; }
+  .qi { display: block; width: 100%; text-align: left; background: none; color: var(--ink); border: none; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 14px; font-weight: 400; }
+  .qi:hover { background: #f8f7f3; }
+  .qi.on { background: #efede7; }
+  .qi b { font-weight: 600; }
+  video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; display: block; }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .kbd { font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--muted); font-weight: 500; }
+  @media (max-width: 860px) { .review { grid-template-columns: 1fr; } .queue { max-height: 280px; } }
+</style>
+</head>
+<body>
+<div class="wrap wide" id="app"><p class="muted">Loading…</p></div>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+const sb = createClient(SLM.SUPABASE_URL, SLM.KEY);
+const app = document.getElementById("app");
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (iso) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+const ago = (iso) => { if (!iso) return ""; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
+const LABEL = { empty: "Not uploaded", pending: "To review", changes_requested: "Changes req.", approved: "Approved", posted: "Live" };
+function toast(msg, ms = 3000) { const d = document.createElement("div"); d.className = "toast"; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), ms); }
+
+let me = null, campaign = null, tab = "review", queue = [], current = null, creators = [], filter = { q: "", s: "all" };
+
+async function teamApi(action, extra = {}) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(`${SLM.SUPABASE_URL}/functions/v1/team-api`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SLM.KEY, Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify({ action, ...extra }),
+  });
+  const data = await r.json().catch(() => ({ error: "Connection problem" }));
+  if (!r.ok || data.error) throw new Error(data.error || "Something went wrong");
+  return data;
+}
+
+// ---------- auth ----------
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return showLogin();
+  const { data: tm } = await sb.from("team_members").select("email, name");
+  me = (tm || []).find(m => m.email.toLowerCase() === session.user.email.toLowerCase());
+  if (!me) {
+    app.innerHTML = `<div class="card stack" style="max-width:440px;margin:40px auto"><h1>No access</h1><p class="muted">${esc(session.user.email)} isn't on the review team list. Ask Sam to add you.</p><button class="ghost" id="out">Sign out</button></div>`;
+    document.getElementById("out").onclick = async () => { await sb.auth.signOut(); location.reload(); };
+    return;
+  }
+  const { data: c } = await sb.from("campaigns").select("*").eq("active", true).order("created_at").limit(1);
+  campaign = c?.[0];
+  await refreshAll();
+  setInterval(() => { if (tab === "review") loadQueue(true); }, 60000);
+}
+
+function showLogin() {
+  app.innerHTML = `<div class="card stack" style="max-width:440px;margin:40px auto">
+    <div class="eyebrow">Stellar · Draft review</div><h1>Sign in</h1>
+    <p class="muted" style="margin:0">Enter your Stellar email and we'll send you a 6-digit code.</p>
+    <form id="lf" class="stack"><input type="email" id="em" placeholder="you@stellarmusic.dk" required autocomplete="email"><button style="width:100%;justify-content:center">Send code</button></form>
+    <form id="cf" class="stack hidden"><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" maxlength="6" required><button style="width:100%;justify-content:center">Sign in</button></form>
+    <div id="lm"></div></div>`;
+  let email = "";
+  const msg = (h) => document.getElementById("lm").innerHTML = h;
+  document.getElementById("lf").onsubmit = async (e) => {
+    e.preventDefault();
+    email = document.getElementById("em").value.trim().toLowerCase();
+    const b = e.target.querySelector("button"); b.disabled = true; b.textContent = "Sending…";
+    try {
+      const r = await fetch(`${SLM.SUPABASE_URL}/functions/v1/team-login`, {
+        method: "POST", headers: { "Content-Type": "application/json", apikey: SLM.KEY }, body: JSON.stringify({ email }),
+      });
+      const d = await r.json().catch(() => ({ error: "Connection problem" }));
+      if (!r.ok || d.error) throw new Error(d.error || "Something went wrong");
+      document.getElementById("lf").classList.add("hidden");
+      document.getElementById("cf").classList.remove("hidden");
+      document.getElementById("code").focus();
+      msg(`<div class="note small">Code sent to <b>${esc(email)}</b>. Check your inbox (and spam, the first time).</div>`);
+    } catch (err) { msg(`<div class="error">${esc(err.message)}</div>`); b.disabled = false; b.textContent = "Send code"; }
+  };
+  document.getElementById("cf").onsubmit = async (e) => {
+    e.preventDefault();
+    const token = document.getElementById("code").value.trim();
+    let { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+    if (error) ({ error } = await sb.auth.verifyOtp({ email, token, type: "magiclink" }));
+    if (error) return msg(`<div class="error">That code didn't work. Check it, or go back and request a new one.</div>`);
+    boot();
+  };
+}
+
+// ---------- shell ----------
+async function refreshAll() { await Promise.all([loadQueue(false), loadCreators()]); renderShell(); }
+
+function stats() {
+  const slots = creators.flatMap(c => c.slots || []);
+  return {
+    creators: creators.length,
+    invited: creators.filter(c => c.invited_at).length,
+    locked: creators.filter(c => c.locked_at).length,
+    committed: slots.length,
+    pending: queue.length,
+    approved: slots.filter(s => ["approved", "posted"].includes(s.status)).length,
+    live: slots.filter(s => s.status === "posted").length,
+  };
+}
+
+function renderShell() {
+  const s = stats();
+  app.innerHTML = `
+    <div class="row spread" style="margin-bottom:14px">
+      <div><div class="eyebrow">Stellar · Draft review</div><h1 style="margin:2px 0 0">${esc(campaign?.name || "No campaign")}</h1></div>
+      <div class="row small muted">${esc(me.name)} · <a href="#" id="out">Sign out</a></div>
+    </div>
+    <div class="stats" style="margin-bottom:18px">
+      <div class="stat"><b>${s.pending}</b><span>Waiting for review</span></div>
+      <div class="stat"><b>${s.locked}/${s.creators}</b><span>Creators committed</span></div>
+      <div class="stat"><b>${s.committed}</b><span>Videos committed</span></div>
+      <div class="stat"><b>${s.approved}</b><span>Approved</span></div>
+      <div class="stat"><b>${s.live}</b><span>Live on TikTok</span></div>
+    </div>
+    <div class="tabs">
+      <button data-tab="review" class="${tab === "review" ? "on" : ""}">Review queue (${s.pending})</button>
+      <button data-tab="creators" class="${tab === "creators" ? "on" : ""}">Creators</button>
+      <button data-tab="setup" class="${tab === "setup" ? "on" : ""}">Setup</button>
+    </div>
+    <div id="pane"></div>`;
+  document.getElementById("out").onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
+  app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; renderShell(); });
+  if (tab === "review") renderReview(); else if (tab === "creators") renderCreators(); else renderSetup();
+}
+
+// ---------- review ----------
+async function loadQueue(rerender) {
+  const { data, error } = await sb.from("versions")
+    .select("id, version_no, uploaded_at, file_name, size_bytes, storage_path, slot_id, slots(slot_no, creator_id, creators(name, tiktok_handle, country, email))")
+    .eq("review_status", "pending").order("uploaded_at").limit(1000);
+  if (error) return toast(error.message);
+  queue = data || [];
+  if (current && !queue.find(q => q.id === current.id)) current = null;
+  if (rerender && tab === "review") { const keep = current?.id; renderShell(); if (keep) select(keep, false); }
+}
+
+function renderReview() {
+  const pane = document.getElementById("pane");
+  if (!queue.length) { pane.innerHTML = `<div class="card center muted" style="padding:48px">Nothing waiting for review 🎉</div>`; return; }
+  pane.innerHTML = `<div class="review">
+    <div class="card queue">${queue.map(v => {
+      const c = v.slots.creators;
+      return `<button class="qi ${current?.id === v.id ? "on" : ""}" data-v="${v.id}">
+        <b>${esc(c.name)}</b>${c.tiktok_handle ? ` <span class="muted small">@${esc(c.tiktok_handle.replace(/^@/, ""))}</span>` : ""}<br>
+        <span class="small muted">Video ${v.slots.slot_no} · v${v.version_no}${v.version_no > 1 ? " (resubmission)" : ""} · ${esc(c.country || "")} · waiting ${ago(v.uploaded_at)}</span></button>`;
+    }).join("")}</div>
+    <div class="card" id="detail"><p class="muted">Pick a draft from the list.</p></div></div>`;
+  pane.querySelectorAll("[data-v]").forEach(b => b.onclick = () => select(b.dataset.v));
+  select(current?.id || queue[0].id);
+}
+
+async function select(id, scroll = true) {
+  current = queue.find(q => q.id === id); if (!current) return;
+  document.querySelectorAll(".qi").forEach(b => b.classList.toggle("on", b.dataset.v === id));
+  const d = document.getElementById("detail"); if (!d) return;
+  const c = current.slots.creators;
+  d.innerHTML = `<p class="muted">Loading video…</p>`;
+  const [{ data: signed }, { data: hist }] = await Promise.all([
+    sb.storage.from("drafts").createSignedUrl(current.storage_path, 3600),
+    sb.from("versions").select("version_no, uploaded_at, review_status, feedback, reviewed_by").eq("slot_id", current.slot_id).neq("id", id).order("version_no"),
+  ]);
+  if (current.id !== id) return;
+  const url = signed?.signedUrl;
+  d.innerHTML = `<div class="stack">
+    <div class="row spread"><div><h2 style="margin:0">${esc(c.name)} · Video ${current.slots.slot_no}</h2>
+      <div class="small muted">Version ${current.version_no} · uploaded ${fmt(current.uploaded_at)} · ${esc(c.country || "")}${c.tiktok_handle ? ` · <a href="https://www.tiktok.com/@${esc(c.tiktok_handle.replace(/^@/, ""))}" target="_blank" rel="noopener">@${esc(c.tiktok_handle.replace(/^@/, ""))}</a>` : ""}</div></div>
+      ${url ? `<a class="btn ghost sm" style="padding:6px 10px;font-size:13px" href="${url}&download=${encodeURIComponent(current.file_name || "draft.mp4")}">Download</a>` : ""}</div>
+    ${url ? `<video src="${url}" controls playsinline preload="metadata"></video><div class="small muted">If the video doesn't play in your browser (some iPhone .mov files), use Download.</div>` : `<div class="error">Couldn't load the video.</div>`}
+    ${(hist || []).length ? `<details open><summary>Earlier versions</summary><ul class="hist">${hist.map(h => `<li>v${h.version_no} · ${fmt(h.uploaded_at)} · <b>${h.review_status === "approved" ? "approved" : h.review_status === "pending" ? "waiting" : "changes requested"}</b>${h.reviewed_by ? ` by ${esc(h.reviewed_by)}` : ""}${h.feedback ? `<br>${esc(h.feedback)}` : ""}</li>`).join("")}</ul></details>` : ""}
+    <textarea id="fb" placeholder="Feedback for the creator (required to request changes, optional when approving)"></textarea>
+    <div class="row">
+      <button class="ok" id="ap">Approve <span class="kbd" style="color:#d7eedf;border-color:#5a9c78">A</span></button>
+      <button class="bad" id="ch">Request changes</button>
+      <span class="small muted" id="rs"></span>
+    </div>
+    <div class="small muted">The creator gets an email straight away.</div></div>`;
+  document.getElementById("ap").onclick = () => decide("approve");
+  document.getElementById("ch").onclick = () => decide("changes");
+  if (scroll && window.innerWidth < 860) d.scrollIntoView({ behavior: "smooth" });
+}
+
+async function decide(decision) {
+  const fb = document.getElementById("fb").value.trim();
+  if (decision === "changes" && !fb) { document.getElementById("fb").focus(); return toast("Write what should change first."); }
+  const btns = document.querySelectorAll("#ap, #ch"); btns.forEach(b => b.disabled = true);
+  document.getElementById("rs").textContent = "Saving…";
+  try {
+    const r = await teamApi("review", { version_id: current.id, decision, feedback: fb });
+    const idx = queue.findIndex(q => q.id === current.id);
+    queue.splice(idx, 1);
+    const next = queue[idx] || queue[idx - 1] || null;
+    current = next;
+    toast(decision === "approve" ? "Approved" : "Feedback sent" + (r.email?.ok ? "" : " (email not sent: " + (r.email?.error || "?") + ")"), r.email?.ok ? 2500 : 6000);
+    loadCreators().then(() => { renderShell(); });
+  } catch (e) { toast(e.message, 5000); btns.forEach(b => b.disabled = false); document.getElementById("rs").textContent = ""; if (/already reviewed/.test(e.message)) loadQueue(true); }
+}
+
+document.addEventListener("keydown", (e) => {
+  if (tab !== "review" || !current || e.target.matches("textarea, input")) return;
+  if (e.key === "a" || e.key === "A") decide("approve");
+  if (e.key === "ArrowDown" || e.key === "j") { const i = queue.findIndex(q => q.id === current.id); if (queue[i + 1]) select(queue[i + 1].id, false); }
+  if (e.key === "ArrowUp" || e.key === "k") { const i = queue.findIndex(q => q.id === current.id); if (queue[i - 1]) select(queue[i - 1].id, false); }
+});
+
+// ---------- creators ----------
+async function loadCreators() {
+  const { data, error } = await sb.from("creators")
+    .select("id, name, email, tiktok_handle, country, token, video_count, locked_at, invited_at, last_seen_at, slots(slot_no, status, tiktok_url)")
+    .order("name").limit(2000);
+  if (error) return toast(error.message);
+  creators = (data || []).map(c => ({ ...c, slots: (c.slots || []).sort((a, b) => a.slot_no - b.slot_no) }));
+}
+
+const linkFor = (c) => `${location.origin}${location.pathname.replace(/team\.html$/, "")}creator.html?t=${c.token}`;
+
+function creatorStage(c) {
+  if (!c.invited_at) return "not_invited";
+  if (!c.last_seen_at) return "not_opened";
+  if (!c.locked_at) return "not_committed";
+  const st = c.slots.map(s => s.status);
+  if (st.length && st.every(s => s === "posted")) return "complete";
+  if (st.includes("changes_requested")) return "changes";
+  if (st.includes("approved")) return "awaiting_link";
+  if (st.includes("pending")) return "in_review";
+  return "uploading";
+}
+const STAGES = { all: "All", not_invited: "Not invited", not_opened: "Invited, not opened", not_committed: "Opened, not committed", uploading: "Committed, no upload yet", in_review: "In review", changes: "Changes requested", awaiting_link: "Approved, link missing", complete: "All videos live" };
+
+function renderCreators() {
+  const pane = document.getElementById("pane");
+  const q = filter.q.toLowerCase();
+  const rows = creators.filter(c => (filter.s === "all" || creatorStage(c) === filter.s) &&
+    (!q || [c.name, c.email, c.tiktok_handle, c.country].some(x => (x || "").toLowerCase().includes(q))));
+  const counts = {}; creators.forEach(c => { const s = creatorStage(c); counts[s] = (counts[s] || 0) + 1; });
+  pane.innerHTML = `<div class="row" style="margin-bottom:12px">
+      <input type="text" id="q" placeholder="Search name, email, handle, country" value="${esc(filter.q)}" style="max-width:320px">
+      <select id="s" style="max-width:260px">${Object.entries(STAGES).map(([k, v]) => `<option value="${k}" ${filter.s === k ? "selected" : ""}>${v}${k === "all" ? ` (${creators.length})` : ` (${counts[k] || 0})`}</option>`).join("")}</select>
+      <button class="ghost sm" id="csv">Export CSV</button>
+    </div>
+    <div class="card scroll-x" style="padding:6px 10px"><table><thead><tr><th>Creator</th><th>Country</th><th>Videos</th><th>Status</th><th>Last opened</th><th></th></tr></thead><tbody>
+    ${rows.map(c => `<tr>
+      <td><b>${esc(c.name)}</b><br><span class="small muted">${esc(c.email || "no email")}${c.tiktok_handle ? " · @" + esc(c.tiktok_handle.replace(/^@/, "")) : ""}</span></td>
+      <td>${esc(c.country || "")}</td>
+      <td>${c.locked_at ? c.video_count : c.video_count ? `<span class="muted">${c.video_count} (unlocked)</span>` : "—"}</td>
+      <td><div class="chips">${c.slots.length ? c.slots.map(s => s.status === "posted" && s.tiktok_url
+          ? `<a class="pill s-posted" href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">V${s.slot_no} live ↗</a>`
+          : `<span class="pill s-${s.status}">V${s.slot_no} ${LABEL[s.status]}</span>`).join("")
+        : `<span class="small muted">${STAGES[creatorStage(c)]}</span>`}</div></td>
+      <td class="small muted">${c.last_seen_at ? fmt(c.last_seen_at) : c.invited_at ? "never" : "—"}</td>
+      <td><div class="row" style="flex-wrap:nowrap">
+        <button class="ghost sm" data-copy="${c.id}">Copy link</button>
+        ${c.email ? `<button class="ghost sm" data-inv="${c.id}">${c.invited_at ? "Resend" : "Invite"}</button>` : ""}
+        ${c.locked_at ? `<button class="ghost sm" data-unlock="${c.id}" title="Let them change their number of videos">Unlock</button>` : ""}
+      </div></td></tr>`).join("") || `<tr><td colspan="6" class="muted center" style="padding:30px">No creators match.</td></tr>`}
+    </tbody></table></div>`;
+  const qi = document.getElementById("q");
+  qi.oninput = () => { filter.q = qi.value; const pos = qi.selectionStart; renderCreators(); const n = document.getElementById("q"); n.focus(); n.setSelectionRange(pos, pos); };
+  document.getElementById("s").onchange = (e) => { filter.s = e.target.value; renderCreators(); };
+  document.getElementById("csv").onclick = () => exportCsv(rows);
+  pane.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { const c = creators.find(x => x.id === b.dataset.copy); await navigator.clipboard.writeText(linkFor(c)); toast("Link copied"); });
+  pane.querySelectorAll("[data-inv]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const r = await teamApi("invite", { creator_ids: [b.dataset.inv] }); toast(r.sent ? "Invite sent" : "Not sent: " + (r.error || "?"), r.sent ? 2500 : 6000); await loadCreators(); renderCreators(); }
+    catch (e) { toast(e.message); b.disabled = false; }
+  });
+  pane.querySelectorAll("[data-unlock]").forEach(b => b.onclick = async () => {
+    if (!confirm("Let this creator choose their number of videos again? Videos already uploaded are kept.")) return;
+    try { await teamApi("unlock", { creator_id: b.dataset.unlock }); toast("Unlocked"); await loadCreators(); renderCreators(); } catch (e) { toast(e.message); }
+  });
+}
+
+function exportCsv(rows) {
+  const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = ["name", "email", "tiktok_handle", "country", "personal_link", "videos_committed", "stage", "video_1", "video_2", "video_3"];
+  const lines = [head.join(",")].concat(rows.map(c => [c.name, c.email, c.tiktok_handle, c.country, linkFor(c), c.locked_at ? c.video_count : "", STAGES[creatorStage(c)],
+    ...[1, 2, 3].map(n => { const s = c.slots.find(x => x.slot_no === n); return s ? (s.tiktok_url || LABEL[s.status]) : ""; })].map(cell).join(",")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\n")], { type: "text/csv" }));
+  a.download = `creators-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+}
+
+// ---------- setup ----------
+function parseCsv(text) {
+  const rows = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') q = false; else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === "," || ch === "\t" || ch === ";") { row.push(cur); cur = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += ch;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim()));
+}
+
+function mapRows(rows) {
+  if (!rows.length) return [];
+  const h = rows[0].map(x => x.trim().toLowerCase());
+  const find = (...keys) => h.findIndex(x => keys.some(k => x.includes(k)));
+  const iName = find("name"), iEmail = find("email", "mail"), iHandle = find("tiktok", "handle", "username"), iCountry = find("country", "market", "location");
+  if (iName < 0 || iEmail < 0) throw new Error("The first row needs column names, including at least “name” and “email”.");
+  return rows.slice(1).map(r => ({
+    name: (r[iName] || "").trim(), email: (r[iEmail] || "").trim().toLowerCase(),
+    tiktok_handle: iHandle >= 0 ? (r[iHandle] || "").trim().replace(/^@/, "") || null : null,
+    country: iCountry >= 0 ? (r[iCountry] || "").trim() || null : null,
+  })).filter(r => r.name && r.email);
+}
+
+async function renderSetup() {
+  const pane = document.getElementById("pane");
+  const notInvited = creators.filter(c => !c.invited_at && c.email).length;
+  const clientLink = `${location.origin}${location.pathname.replace(/team\.html$/, "")}client.html?k=${campaign?.client_key}`;
+  const { data: alerts } = await sb.from("alert_log").select("*").order("sent_at", { ascending: false }).limit(8);
+  const { data: fails } = await sb.from("email_log").select("kind, recipient, error, sent_at").eq("ok", false).order("sent_at", { ascending: false }).limit(8);
+  pane.innerHTML = `<div class="stack" style="max-width:760px">
+    <section class="card stack"><h2>1 · Campaign</h2>
+      <label class="small muted">Name (creators see this)</label><input type="text" id="cn" value="${esc(campaign?.name)}">
+      <label class="small muted">Brief shown at the top of every creator's page (optional)</label><textarea id="cb" placeholder="E.g. song, deadline, do's and don'ts, hashtags…">${esc(campaign?.brief || "")}</textarea>
+      <div><button id="cs">Save</button></div></section>
+
+    <section class="card stack"><h2>2 · Import creators</h2>
+      <p class="muted small" style="margin:0">Paste from a spreadsheet or upload a CSV. First row = column names. Needed: <b>name</b>, <b>email</b>. Optional: <b>tiktok</b> handle, <b>country</b>. Emails already in the list are skipped.</p>
+      <textarea id="imp" placeholder="name,email,tiktok,country&#10;Maria Santos,maria@example.com,@mariasantos,Philippines"></textarea>
+      <div class="row"><input type="file" id="impf" accept=".csv,.tsv,.txt" class="small" style="max-width:260px;padding:6px"><button id="impb">Preview import</button></div>
+      <div id="impr"></div></section>
+
+    <section class="card stack"><h2>3 · Send invites</h2>
+      <p class="muted small" style="margin:0">Each creator gets an email with their personal link. ${creators.length} creators in total, <b>${notInvited}</b> not invited yet.</p>
+      <div class="row"><button id="invAll" ${notInvited ? "" : "disabled"}>Invite ${notInvited} creator${notInvited === 1 ? "" : "s"}</button><span class="small muted" id="invr"></span></div></section>
+
+    <section class="card stack"><h2>Client dashboard</h2>
+      <p class="muted small" style="margin:0">Read-only page for the client: only videos that are live on TikTok, with progress numbers. No reviews, emails or drafts are visible.</p>
+      <div class="row" style="flex-wrap:nowrap"><input type="text" readonly value="${esc(clientLink)}" id="cl"><button class="ghost" id="clc">Copy</button></div></section>
+
+    <section class="card stack"><h2>Team alerts</h2>
+      <p class="muted small" style="margin:0">Slack (#live-marketing-notifications) + email. Ivana: 05:00, 09:00, 13:00 · Anička: 09:00, 13:00, 17:00, 20:00 (Copenhagen time). Extra alert every time 20 more drafts are waiting, to whoever is on shift.</p>
+      <div class="row"><button class="ghost" id="ta">Send test alert</button><span class="small muted" id="tar"></span></div>
+      ${(alerts || []).length ? `<table><thead><tr><th>Sent</th><th>Type</th><th>Waiting</th><th>To</th><th>Result</th></tr></thead><tbody>${alerts.map(a => `<tr><td class="small">${fmt(a.sent_at)}</td><td class="small">${a.kind}</td><td>${a.pending ?? ""}</td><td class="small">${esc(a.recipients || "")}</td><td class="small">${a.ok ? "✓" : a.ok === false ? "✗ " + esc(a.detail || "") : "…"}${a.ok && a.detail ? " " + esc(a.detail) : ""}</td></tr>`).join("")}</tbody></table>` : `<p class="small muted" style="margin:0">No alerts sent yet.</p>`}
+    </section>
+
+    ${(fails || []).length ? `<section class="card stack"><h2>Emails that failed</h2><table><tbody>${fails.map(f => `<tr><td class="small">${fmt(f.sent_at)}</td><td class="small">${esc(f.kind)}</td><td class="small">${esc(f.recipient)}</td><td class="small muted">${esc(f.error || "")}</td></tr>`).join("")}</tbody></table></section>` : ""}
+  </div>`;
+
+  document.getElementById("cs").onclick = async () => {
+    const { error } = await sb.from("campaigns").update({ name: document.getElementById("cn").value.trim(), brief: document.getElementById("cb").value.trim() || null }).eq("id", campaign.id);
+    if (error) return toast(error.message);
+    campaign.name = document.getElementById("cn").value.trim(); campaign.brief = document.getElementById("cb").value.trim(); toast("Saved");
+  };
+  document.getElementById("impf").onchange = async (e) => { const f = e.target.files[0]; if (f) document.getElementById("imp").value = await f.text(); };
+  document.getElementById("impb").onclick = () => {
+    const out = document.getElementById("impr");
+    let list;
+    try { list = mapRows(parseCsv(document.getElementById("imp").value)); } catch (e) { out.innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+    const existing = new Set(creators.map(c => (c.email || "").toLowerCase()));
+    const seen = new Set();
+    const fresh = list.filter(r => { if (existing.has(r.email) || seen.has(r.email)) return false; seen.add(r.email); return true; });
+    const bad = fresh.filter(r => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email));
+    out.innerHTML = `<div class="note small">${list.length} rows read · <b>${fresh.length - bad.length}</b> new · ${list.length - fresh.length} already in the list${bad.length ? ` · ${bad.length} with an invalid email (skipped: ${bad.slice(0, 3).map(b => esc(b.email)).join(", ")}${bad.length > 3 ? "…" : ""})` : ""}</div>
+      ${fresh.length - bad.length ? `<div class="row" style="margin-top:10px"><button id="impgo">Add ${fresh.length - bad.length} creators</button></div>` : ""}`;
+    const go = document.getElementById("impgo");
+    if (go) go.onclick = async () => {
+      go.disabled = true; go.textContent = "Adding…";
+      const rows = fresh.filter(r => !bad.includes(r)).map(r => ({ ...r, campaign_id: campaign.id }));
+      for (let i = 0; i < rows.length; i += 200) {
+        const { error } = await sb.from("creators").insert(rows.slice(i, i + 200));
+        if (error) { out.innerHTML = `<div class="error">${esc(error.message)}</div>`; return; }
+      }
+      toast(`${rows.length} creators added`); document.getElementById("imp").value = "";
+      await loadCreators(); renderShell();
+    };
+  };
+  document.getElementById("invAll").onclick = async (e) => {
+    if (!confirm(`Send the invite email to ${notInvited} creators now?`)) return;
+    e.target.disabled = true; document.getElementById("invr").textContent = "Sending…";
+    try { const r = await teamApi("invite", {}); document.getElementById("invr").textContent = `${r.sent} sent${r.failed ? `, ${r.failed} failed: ${r.error}` : ""}`; await loadCreators(); }
+    catch (err) { document.getElementById("invr").textContent = err.message; e.target.disabled = false; }
+  };
+  document.getElementById("clc").onclick = async () => { await navigator.clipboard.writeText(clientLink); toast("Client link copied"); };
+  document.getElementById("ta").onclick = async (e) => {
+    e.target.disabled = true; document.getElementById("tar").textContent = "Sending…";
+    try { const r = await teamApi("test_alert"); document.getElementById("tar").textContent = `Slack: ${r.slack.ok ? "✓" : "✗ " + r.slack.error} · Email: ${r.email.ok ? "✓" : "✗ " + r.email.error}`; }
+    catch (err) { document.getElementById("tar").textContent = err.message; }
+    e.target.disabled = false;
+  };
+}
+
+boot();
+</script>
+</body>
+</html>

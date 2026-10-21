@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Campaign dashboard · Stellar</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<style>
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .post { display: flex; flex-direction: column; gap: 8px; }
+  .post iframe { width: 100%; aspect-ratio: 9 / 16; border: 0; border-radius: 10px; background: #000; }
+  .bar { height: 10px; background: #efede7; border-radius: 99px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap wide" id="app"><p class="muted">Loading…</p></div>
+<script>
+const K = new URLSearchParams(location.search).get("k") || "";
+const app = document.getElementById("app");
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+const vid = (u) => (u.match(/\/video\/(\d+)/) || [])[1];
+let data = null, f = { country: "", q: "" };
+
+async function load() {
+  try {
+    const r = await fetch(`${SLM.SUPABASE_URL}/functions/v1/client-feed?k=${encodeURIComponent(K)}`, { headers: { apikey: SLM.KEY } });
+    data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || "Couldn't load");
+    render();
+  } catch (e) { app.innerHTML = `<h1>Dashboard unavailable</h1><div class="error">${esc(e.message)}</div>`; }
+}
+
+function render() {
+  const t = data.totals;
+  const countries = [...new Set(data.posts.map(p => p.country).filter(Boolean))].sort();
+  const q = f.q.toLowerCase();
+  const posts = data.posts.filter(p => (!f.country || p.country === f.country) && (!q || [p.creator, p.handle].some(x => (x || "").toLowerCase().includes(q))));
+  const pct = t.videos_committed ? Math.round(t.videos_live / t.videos_committed * 100) : 0;
+  const byCountry = {}; data.posts.forEach(p => { const k = p.country || "Other"; byCountry[k] = (byCountry[k] || 0) + 1; });
+
+  app.innerHTML = `
+    <div class="eyebrow">Stellar · Campaign dashboard</div>
+    <h1>${esc(data.campaign)}</h1>
+    <p class="muted small" style="margin:0 0 18px">Updated ${new Date(data.updated_at).toLocaleString()} · <a href="#" id="rf">Refresh</a></p>
+    <div class="stats">
+      <div class="stat"><b>${t.videos_live}</b><span>Videos live on TikTok</span></div>
+      <div class="stat"><b>${t.creators_live}</b><span>Creators live</span></div>
+      <div class="stat"><b>${t.videos_approved}</b><span>Videos approved</span></div>
+      <div class="stat"><b>${t.videos_committed}</b><span>Videos committed</span></div>
+    </div>
+    <div class="card" style="margin:14px 0 18px">
+      <div class="row spread small" style="margin-bottom:8px"><b>Delivery progress</b><span class="muted">${t.videos_live} of ${t.videos_committed} committed videos live · ${pct}%</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      ${Object.keys(byCountry).length ? `<div class="row small muted" style="margin-top:10px">${Object.entries(byCountry).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span>${esc(k)}: <b style="color:var(--ink)">${v}</b></span>`).join(" · ")}</div>` : ""}
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <input type="text" id="q" placeholder="Search creator" value="${esc(f.q)}" style="max-width:260px">
+      <select id="c" style="max-width:200px"><option value="">All countries</option>${countries.map(c => `<option ${f.country === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
+      <button class="ghost sm" id="csv">Download CSV</button>
+    </div>
+    ${posts.length ? `<div class="grid">${posts.map((p, i) => `<div class="card post">
+        <div><b>${esc(p.creator)}</b>${p.handle ? ` <span class="muted small">@${esc(p.handle.replace(/^@/, ""))}</span>` : ""}<br>
+        <span class="small muted">${esc(p.country || "")}${p.country ? " · " : ""}Video ${p.video_no} · posted ${fmt(p.posted_at)}</span></div>
+        <div id="e${i}"></div>
+        <div class="row">
+          <a class="btn sm" style="padding:6px 10px;font-size:13px" href="${esc(p.url)}" target="_blank" rel="noopener">Open on TikTok ↗</a>
+          ${vid(p.url) ? `<button class="ghost sm" data-prev="${i}" data-id="${vid(p.url)}">Preview</button>` : ""}
+        </div></div>`).join("")}</div>`
+      : `<div class="card center muted" style="padding:48px">No videos live yet${f.country || f.q ? " for this filter" : ""}.</div>`}`;
+
+  document.getElementById("rf").onclick = (e) => { e.preventDefault(); load(); };
+  const qi = document.getElementById("q");
+  qi.oninput = () => { f.q = qi.value; const pos = qi.selectionStart; render(); const n = document.getElementById("q"); n.focus(); n.setSelectionRange(pos, pos); };
+  document.getElementById("c").onchange = (e) => { f.country = e.target.value; render(); };
+  document.getElementById("csv").onclick = () => {
+    const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [["creator", "tiktok_handle", "country", "video", "tiktok_url", "posted_at"].join(",")]
+      .concat(posts.map(p => [p.creator, p.handle, p.country, p.video_no, p.url, p.posted_at].map(cell).join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\n")], { type: "text/csv" }));
+    a.download = `${data.campaign.replace(/\W+/g, "-").toLowerCase()}-tiktoks.csv`; a.click();
+  };
+  app.querySelectorAll("[data-prev]").forEach(b => b.onclick = () => {
+    document.getElementById("e" + b.dataset.prev).innerHTML = `<iframe src="https://www.tiktok.com/embed/v2/${b.dataset.id}" allow="encrypted-media; fullscreen" loading="lazy"></iframe>`;
+    b.remove();
+  });
+}
+
+if (!K) app.innerHTML = `<h1>Link missing</h1><p class="muted">Please open the full dashboard link.</p>`; else load();
+</script>
+</body>
+</html>

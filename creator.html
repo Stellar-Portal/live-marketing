@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Your upload page · Stellar</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"></script>
+</head>
+<body>
+<div class="wrap" id="app"><p class="muted">Loading…</p></div>
+
+<script>
+const T = new URLSearchParams(location.search).get("t") || "";
+const app = document.getElementById("app");
+let state = null;
+let uploading = {}; // slot_no -> { upload, pct }
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+const mb = (b) => b ? (b / 1048576).toFixed(b > 104857600 ? 0 : 1) + " MB" : "";
+
+function toast(msg, ms = 3500) {
+  const d = document.createElement("div"); d.className = "toast"; d.textContent = msg;
+  document.body.appendChild(d); setTimeout(() => d.remove(), ms);
+}
+
+async function api(action, extra = {}) {
+  const r = await fetch(`${SLM.SUPABASE_URL}/functions/v1/creator-api`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SLM.KEY },
+    body: JSON.stringify({ token: T, action, ...extra }),
+  });
+  const data = await r.json().catch(() => ({ error: "Connection problem, please try again." }));
+  if (!r.ok || data.error) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+
+async function load() {
+  try {
+    state = await api("get");
+    render();
+  } catch (e) {
+    app.innerHTML = `<div class="eyebrow">Stellar</div><h1>We couldn't open this page</h1><div class="error">${esc(e.message)}</div><p class="muted small">Check that you opened the full link from your email. If it still doesn't work, reply to that email and we'll help.</p>`;
+  }
+}
+
+const STATUS_LABEL = {
+  empty: "Not uploaded", pending: "Waiting for review", changes_requested: "Changes requested",
+  approved: "Approved – post it!", posted: "Live on TikTok",
+};
+
+function render() {
+  const { creator, campaign, slots } = state;
+  const first = esc((creator.name || "").split(" ")[0]);
+  let html = `<div class="eyebrow">Stellar · ${esc(campaign.name)}</div>
+    <h1>Hi ${first} 👋</h1>`;
+  if (campaign.brief) html += `<div class="note small" style="white-space:pre-wrap">${esc(campaign.brief)}</div>`;
+
+  if (!creator.locked) {
+    html += `<div class="card stack" style="margin-top:18px">
+      <div><h2>How many videos will you make?</h2>
+      <p class="muted small" style="margin:0">Choose up to 3. Once you confirm, this number is locked and you'll upload exactly that many drafts.</p></div>
+      <div class="choice">
+        ${[1,2,3].map(n => `<button type="button" data-n="${n}">${n}<span>${n === 1 ? "video" : "videos"}</span></button>`).join("")}
+      </div>
+      <button id="lockBtn" disabled style="width:100%;justify-content:center">Confirm</button>
+      <div id="lockErr"></div>
+    </div>`;
+    app.innerHTML = html;
+    let chosen = 0;
+    app.querySelectorAll(".choice button").forEach(b => b.onclick = () => {
+      chosen = Number(b.dataset.n);
+      app.querySelectorAll(".choice button").forEach(x => x.classList.toggle("sel", x === b));
+      const lb = document.getElementById("lockBtn");
+      lb.disabled = false; lb.textContent = `Lock in ${chosen} video${chosen > 1 ? "s" : ""}`;
+    });
+    document.getElementById("lockBtn").onclick = async () => {
+      if (!chosen) return;
+      if (!confirm(`You're committing to ${chosen} video${chosen > 1 ? "s" : ""}. You can't change this yourself afterwards. Continue?`)) return;
+      const lb = document.getElementById("lockBtn"); lb.disabled = true; lb.textContent = "Saving…";
+      try { await api("lock", { count: chosen }); await load(); }
+      catch (e) { document.getElementById("lockErr").innerHTML = `<div class="error">${esc(e.message)}</div>`; lb.disabled = false; lb.textContent = `Lock in ${chosen}`; }
+    };
+    return;
+  }
+
+  const live = slots.filter(s => s.status === "posted").length;
+  const approved = slots.filter(s => ["approved","posted"].includes(s.status)).length;
+  html += `<p class="muted" style="margin:4px 0 18px">You committed to <b>${creator.video_count}</b> video${creator.video_count > 1 ? "s" : ""} · ${approved} approved · ${live} live on TikTok</p>`;
+
+  html += `<div class="stack">` + slots.map(slotCard).join("") + `</div>`;
+  html += `<p class="muted small center" style="margin-top:28px">Questions? Reply to the email you got from us.<br>This page is personal to you – please don't share the link.</p>`;
+  app.innerHTML = html;
+  bindSlots();
+}
+
+function slotCard(s) {
+  const n = s.slot_no;
+  const last = s.versions[s.versions.length - 1];
+  const up = uploading[n];
+  let body = "";
+
+  if (up) {
+    body = `<div class="stack">
+      <div class="row spread small"><span>Uploading <b>${esc(up.name)}</b></span><span id="pct${n}">${up.pct}%</span></div>
+      <div class="progress"><i id="bar${n}" style="width:${up.pct}%"></i></div>
+      <p class="muted small" style="margin:0">Keep this page open. If your connection drops, it will continue where it stopped.</p>
+      <button class="ghost sm" data-cancel="${n}">Cancel</button></div>`;
+  } else if (s.status === "empty" || s.status === "changes_requested") {
+    if (s.status === "changes_requested" && last?.feedback) {
+      body += `<div><div class="small muted" style="margin-bottom:6px">Feedback on version ${last.version_no}:</div><div class="feedback">${esc(last.feedback)}</div></div>`;
+    }
+    body += `<label class="drop" data-drop="${n}">
+      <input type="file" accept="video/*" data-file="${n}" class="hidden">
+      <b>${s.status === "changes_requested" ? "Upload the new version" : "Upload your draft"}</b><br>
+      <span class="muted small">Tap to choose a video · MP4 or MOV · up to 1 GB</span></label>`;
+  } else if (s.status === "pending") {
+    body = `<div class="note small">We've got <b>${esc(last?.file_name || "your video")}</b> (version ${last?.version_no}, sent ${fmtDate(last?.uploaded_at)}). We'll email you as soon as it's reviewed.</div>`;
+  } else if (s.status === "approved" || s.status === "posted") {
+    if (last?.feedback) body += `<div class="note small"><b>Note from the team:</b> ${esc(last.feedback)}</div>`;
+    if (s.status === "approved") body += `<p style="margin:0">Your draft is approved. Post it on TikTok, then paste the link here:</p>`;
+    else body += `<p style="margin:0" class="small">Your TikTok: <a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">${esc(s.tiktok_url)}</a></p>`;
+    body += `<form class="row" data-link="${n}" style="flex-wrap:nowrap">
+      <input type="url" inputmode="url" placeholder="https://www.tiktok.com/@you/video/…" value="${s.status === "posted" ? esc(s.tiktok_url) : ""}" required>
+      <button type="submit">${s.status === "posted" ? "Update" : "Send"}</button></form>
+      <div data-linkerr="${n}"></div>`;
+  }
+
+  const hist = s.versions.length ? `<details><summary>History (${s.versions.length} version${s.versions.length > 1 ? "s" : ""})</summary><ul class="hist">${
+    s.versions.slice().reverse().map(v => `<li>v${v.version_no} · ${esc(v.file_name || "")} · ${fmtDate(v.uploaded_at)} · <b>${
+      v.review_status === "pending" ? "waiting" : v.review_status === "approved" ? "approved" : "changes requested"}</b>${v.feedback ? `<br><span class="muted">${esc(v.feedback)}</span>` : ""}</li>`).join("")
+  }</ul></details>` : "";
+
+  return `<section class="card stack" id="slot${n}">
+    <div class="row spread"><h2 style="margin:0">Video ${n}</h2><span class="pill s-${up ? "pending" : s.status}">${up ? "Uploading" : STATUS_LABEL[s.status]}</span></div>
+    ${body}${hist}</section>`;
+}
+
+function bindSlots() {
+  app.querySelectorAll("[data-file]").forEach(inp => inp.onchange = () => {
+    if (inp.files[0]) startUpload(Number(inp.dataset.file), inp.files[0]);
+  });
+  app.querySelectorAll("[data-drop]").forEach(d => {
+    d.ondragover = (e) => { e.preventDefault(); d.classList.add("over"); };
+    d.ondragleave = () => d.classList.remove("over");
+    d.ondrop = (e) => { e.preventDefault(); d.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) startUpload(Number(d.dataset.drop), f); };
+  });
+  app.querySelectorAll("[data-cancel]").forEach(b => b.onclick = () => {
+    const n = Number(b.dataset.cancel); const u = uploading[n];
+    if (u?.upload) u.upload.abort(true);
+    delete uploading[n]; render();
+  });
+  app.querySelectorAll("[data-link]").forEach(f => f.onsubmit = async (e) => {
+    e.preventDefault();
+    const n = Number(f.dataset.link); const url = f.querySelector("input").value.trim();
+    const btn = f.querySelector("button"); btn.disabled = true;
+    try { await api("submit_link", { slot_no: n, url }); toast("Thanks! Link saved."); await load(); }
+    catch (err) { app.querySelector(`[data-linkerr="${n}"]`).innerHTML = `<div class="error small">${esc(err.message)}</div>`; btn.disabled = false; }
+  });
+}
+
+// ---------- resumable upload ----------
+const resumeKey = (n, f) => `slm:${T}:${n}:${f.name}:${f.size}:${f.lastModified}`;
+
+async function startUpload(n, file) {
+  if (file.type && !file.type.startsWith("video/")) return toast("Please choose a video file.");
+  if (file.size > 1024 ** 3) return toast("That file is over 1 GB. Please export a smaller version (1080p is perfect).", 6000);
+
+  let session = null;
+  try { session = JSON.parse(localStorage.getItem(resumeKey(n, file)) || "null"); } catch {}
+  if (!session || Date.now() - session.at > 90 * 60 * 1000) {
+    try {
+      const r = await api("start_upload", { slot_no: n, file_name: file.name, size: file.size, mime: file.type });
+      session = { path: r.path, token: r.token, at: Date.now() };
+      try { localStorage.setItem(resumeKey(n, file), JSON.stringify(session)); } catch {}
+    } catch (e) { return toast(e.message, 6000); }
+  }
+
+  uploading[n] = { name: file.name, pct: 0 };
+  render();
+
+  const upload = new tus.Upload(file, {
+    endpoint: `${SLM.STORAGE_URL}/storage/v1/upload/resumable`,
+    retryDelays: [0, 2000, 5000, 10000, 20000, 30000, 60000],
+    headers: { "x-signature": session.token, apikey: SLM.KEY },
+    uploadDataDuringCreation: true,
+    removeFingerprintOnSuccess: true,
+    chunkSize: 6 * 1024 * 1024,
+    metadata: { bucketName: "drafts", objectName: session.path, contentType: file.type || "video/mp4", cacheControl: "3600" },
+    onProgress(sent, total) {
+      const pct = Math.floor((sent / total) * 100);
+      uploading[n].pct = pct;
+      const p = document.getElementById("pct" + n), b = document.getElementById("bar" + n);
+      if (p) p.textContent = pct + "%"; if (b) b.style.width = pct + "%";
+    },
+    async onSuccess() {
+      try {
+        await api("finish_upload", { slot_no: n, path: session.path, file_name: file.name, size: file.size, mime: file.type });
+        try { localStorage.removeItem(resumeKey(n, file)); } catch {}
+        delete uploading[n];
+        toast(`Video ${n} received! We'll email you after review.`, 5000);
+        await load();
+      } catch (e) { delete uploading[n]; toast(e.message, 6000); render(); }
+    },
+    onError(err) {
+      delete uploading[n];
+      try { localStorage.removeItem(resumeKey(n, file)); } catch {}
+      toast("Upload failed. Please check your connection and try again.", 6000);
+      console.error(err); render();
+    },
+  });
+  uploading[n].upload = upload;
+  const prev = await upload.findPreviousUploads().catch(() => []);
+  if (prev.length) upload.resumeFromPreviousUpload(prev[0]);
+  upload.start();
+}
+
+window.addEventListener("beforeunload", (e) => { if (Object.keys(uploading).length) { e.preventDefault(); e.returnValue = ""; } });
+
+if (!T) app.innerHTML = `<div class="eyebrow">Stellar</div><h1>Link missing</h1><p class="muted">Please open the full link from your email.</p>`;
+else load();
+</script>
+</body>
+</html>
