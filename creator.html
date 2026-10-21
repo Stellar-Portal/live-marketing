@@ -169,7 +169,10 @@ function slotCard(s) {
       body = `<p class="muted small" style="margin:0">Sent ${fmtDate(last?.uploaded_at)}. We'll email you as soon as it's reviewed.</p>`;
     } else if (s.status === "approved" || s.status === "posted") {
       if (last?.feedback) body += `<div class="note small"><b>Note from Stellar:</b> ${esc(last.feedback)}</div>`;
-      if (s.status === "approved") body += `<p class="small" style="margin:0">Approved. Post it on TikTok, then paste the link here.</p>`;
+      if (s.status === "approved") {
+        const othersOpen = state.slots.some(o => o.slot_no !== n && !["approved", "posted"].includes(o.status));
+        body += `<p class="small" style="margin:0">Approved! ${othersOpen ? "You can post this one now, no need to wait for your other videos. " : ""}Post it on TikTok, then paste the link here.</p>`;
+      }
       else body += `<p class="small" style="margin:0"><a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">Open your TikTok</a></p>`;
       body += linkForm(n, s);
     }
