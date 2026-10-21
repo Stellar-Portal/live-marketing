@@ -231,12 +231,13 @@ function renderLinks() {
 // ---------- review (grouped by creator; decisions are staged, then sent as one email per creator) ----------
 let currentCid = null;   // creator currently open
 let urlCache = {};       // version id -> signed video URL
+const thumbPublic = (p) => `${SLM.SUPABASE_URL}/storage/v1/object/public/thumbs/${p}`;
 const fbDrafts = {};     // version id -> feedback being typed (survives re-renders)
 
 async function loadQueue(rerender) {
   if (!campaign) { queue = []; return; }
   const { data, error } = await sb.from("versions")
-    .select("id, version_no, uploaded_at, file_name, size_bytes, storage_path, slot_id, decision, decision_feedback, decided_by, slots!inner(slot_no, creator_id, creators!inner(id, name, tiktok_handle, country, email, campaign_id))")
+    .select("id, version_no, uploaded_at, file_name, size_bytes, storage_path, thumb_path, slot_id, decision, decision_feedback, decided_by, slots!inner(slot_no, creator_id, creators!inner(id, name, tiktok_handle, country, email, campaign_id))")
     .eq("review_status", "pending").eq("slots.creators.campaign_id", campaign.id)
     .order("uploaded_at").limit(2000);
   if (error) return toast(error.message);
@@ -317,7 +318,8 @@ async function renderCreatorDetail(g) {
     return `<section class="stack" style="border-top:1px solid var(--line);padding-top:14px">
       <div class="row spread"><div><b>Video ${v.slots.slot_no}</b> <span class="small muted">· version ${v.version_no}${v.version_no > 1 ? " (resubmission)" : ""} · uploaded ${fmt(v.uploaded_at)}</span></div>
         ${url ? `<a class="btn ghost sm" style="padding:6px 10px;font-size:13px" href="${url}&download=${encodeURIComponent(v.file_name || "draft.mp4")}">Download</a>` : ""}</div>
-      ${url ? `<video src="${url}" controls playsinline preload="metadata"></video>` : `<div class="error small">Couldn't load this video.</div>`}
+      ${url ? `<video src="${url}" controls playsinline preload="metadata"${v.thumb_path ? ` poster="${thumbPublic(v.thumb_path)}"` : ""}></video>` : `<div class="error small">Couldn't load this video.</div>`}
+      <div class="small muted">${esc(v.file_name || "")}</div>
       ${earlier.length ? `<details><summary>Earlier versions (${earlier.length})</summary><ul class="hist">${earlier.map(h => `<li>v${h.version_no} · ${fmt(h.uploaded_at)} · <b>${h.review_status === "approved" ? "approved" : h.review_status === "skipped" ? "not needed" : "changes requested"}</b>${h.reviewed_by ? ` by ${esc(h.reviewed_by)}` : ""}${h.feedback ? `<br>${esc(h.feedback)}` : ""}</li>`).join("")}</ul></details>` : ""}
       ${decided}
     </section>`;

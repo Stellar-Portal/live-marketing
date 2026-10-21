@@ -98,6 +98,9 @@ function render() {
   bindSlots();
 }
 
+const thumbImg = (v) => v?.thumb_url
+  ? `<div class="row small muted" style="flex-wrap:nowrap"><img src="${esc(v.thumb_url)}" alt="" style="width:64px;border-radius:8px;border:1px solid var(--line);flex:none"><span>${esc(v.file_name || "")}<br>uploaded ${fmtDate(v.uploaded_at)}</span></div>` : "";
+
 function slotCard(s) {
   const n = s.slot_no;
   const last = s.versions[s.versions.length - 1];
@@ -124,15 +127,16 @@ function slotCard(s) {
       <button class="ghost sm" data-cancel="${n}">Cancel</button></div>`;
   } else if (s.status === "empty" || s.status === "changes_requested") {
     if (s.status === "changes_requested" && last?.feedback) {
-      body += `<div><div class="small muted" style="margin-bottom:6px">Feedback on version ${last.version_no}:</div><div class="feedback">${esc(last.feedback)}</div></div>`;
+      body += `${thumbImg(last)}<div><div class="small muted" style="margin-bottom:6px">Feedback on version ${last.version_no} (${esc(last.file_name || "your video")}):</div><div class="feedback">${esc(last.feedback)}</div></div>`;
     }
     body += `<label class="drop" data-drop="${n}">
       <input type="file" accept="video/*" data-file="${n}" class="hidden">
       <b>${s.status === "changes_requested" ? "Upload the new version" : "Upload your draft"}</b><br>
       <span class="muted small">Tap to choose a video · MP4 or MOV · up to 1 GB</span></label>`;
   } else if (s.status === "pending") {
-    body = `<div class="note small">We've got <b>${esc(last?.file_name || "your video")}</b> (version ${last?.version_no}, sent ${fmtDate(last?.uploaded_at)}). We'll email you as soon as it's reviewed.</div>`;
+    body = `${thumbImg(last)}<div class="note small">We've got <b>${esc(last?.file_name || "your video")}</b> (version ${last?.version_no}, sent ${fmtDate(last?.uploaded_at)}). We'll email you as soon as it's reviewed.</div>`;
   } else if (s.status === "approved" || s.status === "posted") {
+    body += thumbImg(last);
     if (last?.feedback) body += `<div class="note small"><b>Note from the team:</b> ${esc(last.feedback)}</div>`;
     if (s.status === "approved") body += `<p style="margin:0">Your draft is approved. Post it on TikTok, then paste the link here:</p>`;
     else body += `<p style="margin:0" class="small">Your TikTok: <a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">${esc(s.tiktok_url)}</a></p>`;
@@ -143,8 +147,8 @@ function slotCard(s) {
   }
 
   const hist = s.versions.length ? `<details><summary>History (${s.versions.length} version${s.versions.length > 1 ? "s" : ""})</summary><ul class="hist">${
-    s.versions.slice().reverse().map(v => `<li>v${v.version_no} · ${esc(v.file_name || "")} · ${fmtDate(v.uploaded_at)} · <b>${
-      v.review_status === "pending" ? "waiting" : v.review_status === "approved" ? "approved" : v.review_status === "skipped" ? "not needed" : "changes requested"}</b>${v.feedback ? `<br><span class="muted">${esc(v.feedback)}</span>` : ""}</li>`).join("")
+    s.versions.slice().reverse().map(v => `<li style="display:flex;gap:10px;align-items:flex-start">${v.thumb_url ? `<img src="${esc(v.thumb_url)}" alt="" style="width:40px;border-radius:4px;flex:none">` : ""}<span>v${v.version_no} · ${esc(v.file_name || "")} · ${fmtDate(v.uploaded_at)} · <b>${
+      v.review_status === "pending" ? "waiting" : v.review_status === "approved" ? "approved" : v.review_status === "skipped" ? "not needed" : "changes requested"}</b>${v.feedback ? `<br><span class="muted">${esc(v.feedback)}</span>` : ""}</span></li>`).join("")
   }</ul></details>` : "";
 
   return `<section class="card stack" id="slot${n}">
@@ -175,6 +179,38 @@ function bindSlots() {
   });
 }
 
+// ---------- thumbnail: grab a frame from the video on this device ----------
+function makeThumb(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    let done = false;
+    const finish = (blob) => { if (done) return; done = true; URL.revokeObjectURL(url); v.removeAttribute("src"); resolve(blob); };
+    setTimeout(() => finish(null), 8000);
+    v.muted = true; v.playsInline = true; v.preload = "metadata"; v.src = url;
+    v.onloadedmetadata = () => { try { v.currentTime = Math.min(1, (v.duration || 2) * 0.25); } catch { finish(null); } };
+    v.onseeked = () => {
+      try {
+        const w = 360, h = Math.round(w * (v.videoHeight || 640) / (v.videoWidth || 360));
+        const c = document.createElement("canvas"); c.width = w; c.height = h;
+        c.getContext("2d").drawImage(v, 0, 0, w, h);
+        c.toBlob((b) => finish(b), "image/jpeg", 0.75);
+      } catch { finish(null); }
+    };
+    v.onerror = () => finish(null);
+  });
+}
+
+async function uploadThumb(file, session) {
+  if (!session.thumb_path || !session.thumb_token) return false;
+  const blob = await makeThumb(file);
+  if (!blob) return false;
+  const r = await fetch(`${SLM.SUPABASE_URL}/storage/v1/object/upload/sign/thumbs/${session.thumb_path}?token=${encodeURIComponent(session.thumb_token)}`, {
+    method: "PUT", headers: { apikey: SLM.KEY, "Content-Type": "image/jpeg" }, body: blob,
+  });
+  return r.ok;
+}
+
 // ---------- resumable upload ----------
 const resumeKey = (n, f) => `slm:${T}:${n}:${f.name}:${f.size}:${f.lastModified}`;
 
@@ -187,13 +223,14 @@ async function startUpload(n, file) {
   if (!session || Date.now() - session.at > 90 * 60 * 1000) {
     try {
       const r = await api("start_upload", { slot_no: n, file_name: file.name, size: file.size, mime: file.type });
-      session = { path: r.path, token: r.token, at: Date.now() };
+      session = { path: r.path, token: r.token, thumb_path: r.thumb_path, thumb_token: r.thumb_token, at: Date.now() };
       try { localStorage.setItem(resumeKey(n, file), JSON.stringify(session)); } catch {}
     } catch (e) { return toast(e.message, 6000); }
   }
 
   uploading[n] = { name: file.name, pct: 0 };
   render();
+  const thumbDone = uploadThumb(file, session).catch(() => false);
 
   const upload = new tus.Upload(file, {
     endpoint: `${SLM.STORAGE_URL}/storage/v1/upload/resumable`,
@@ -211,7 +248,8 @@ async function startUpload(n, file) {
     },
     async onSuccess() {
       try {
-        await api("finish_upload", { slot_no: n, path: session.path, file_name: file.name, size: file.size, mime: file.type });
+        const thumb = await Promise.race([thumbDone, new Promise(r => setTimeout(() => r(false), 10000))]);
+        await api("finish_upload", { slot_no: n, path: session.path, file_name: file.name, size: file.size, mime: file.type, thumb: !!thumb });
         try { localStorage.removeItem(resumeKey(n, file)); } catch {}
         delete uploading[n];
         toast(`Video ${n} received! We'll email you after review.`, 5000);
