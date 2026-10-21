@@ -86,9 +86,9 @@ function render() {
   if (!creator.locked) {
     html += `<div class="card stack">
       <div><h2>How many videos will you make?</h2>
-      <p class="muted small" style="margin:4px 0 0">Choose up to 3. Once you confirm, the number is locked and you'll ${campaign.drafts_enabled ? "upload exactly that many drafts" : "send exactly that many TikTok links"}.</p></div>
-      <div class="choice">
-        ${[1,2,3].map(n => `<button type="button" data-n="${n}">${n}<span>${n === 1 ? "video" : "videos"}</span></button>`).join("")}
+      <p class="muted small" style="margin:4px 0 0">Choose 2 or 3. Once you confirm, the number is locked and you'll ${campaign.drafts_enabled ? "upload exactly that many drafts" : "send exactly that many TikTok links"}.</p></div>
+      <div class="choice" style="grid-template-columns:repeat(2,1fr)">
+        ${[2,3].map(n => `<button type="button" data-n="${n}">${n}<span>videos</span></button>`).join("")}
       </div>
       <button id="lockBtn" disabled style="width:100%;justify-content:center">Confirm</button>
       <div id="lockErr"></div>
