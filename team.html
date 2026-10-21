@@ -131,13 +131,61 @@ function renderShell() {
     </div>
     <div class="tabs">
       <button data-tab="review" class="${tab === "review" ? "on" : ""}">Review queue (${s.pending})</button>
+      <button data-tab="links" class="${tab === "links" ? "on" : ""}">Posted links (${s.live})</button>
       <button data-tab="creators" class="${tab === "creators" ? "on" : ""}">Creators</button>
       <button data-tab="setup" class="${tab === "setup" ? "on" : ""}">Setup</button>
     </div>
     <div id="pane"></div>`;
   document.getElementById("out").onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; renderShell(); });
-  if (tab === "review") renderReview(); else if (tab === "creators") renderCreators(); else renderSetup();
+  if (tab === "review") renderReview(); else if (tab === "links") renderLinks(); else if (tab === "creators") renderCreators(); else renderSetup();
+}
+
+// ---------- posted links (for copying into the external dashboard) ----------
+let linksSince = "";
+function postedLinks() {
+  return creators.flatMap(c => c.slots.filter(s => s.status === "posted" && s.tiktok_url).map(s => ({
+    creator: c.name, handle: (c.tiktok_handle || "").replace(/^@/, ""), country: c.country || "",
+    video: s.slot_no, url: s.tiktok_url, posted_at: s.posted_at,
+  }))).sort((a, b) => (a.posted_at || "").localeCompare(b.posted_at || ""));
+}
+
+function renderLinks() {
+  const pane = document.getElementById("pane");
+  const all = postedLinks();
+  const rows = linksSince ? all.filter(r => r.posted_at && r.posted_at >= new Date(linksSince + "T00:00:00").toISOString()) : all;
+  const tsv = (withHead) => (withHead ? ["Creator", "TikTok handle", "Country", "Video", "TikTok link", "Posted"].join("\t") + "\n" : "") +
+    rows.map(r => [r.creator, r.handle ? "@" + r.handle : "", r.country, r.video, r.url, r.posted_at ? r.posted_at.slice(0, 10) : ""].join("\t")).join("\n");
+  pane.innerHTML = `<div class="stack">
+    <div class="row">
+      <label class="small muted">Posted since</label>
+      <input type="date" id="since" value="${linksSince}" style="max-width:180px">
+      ${linksSince ? `<button class="ghost sm" id="clr">Show all</button>` : ""}
+      <span class="small muted">${rows.length} link${rows.length === 1 ? "" : "s"}</span>
+    </div>
+    <div class="row">
+      <button id="cpL" ${rows.length ? "" : "disabled"}>Copy links only</button>
+      <button class="ghost" id="cpT" ${rows.length ? "" : "disabled"}>Copy as table</button>
+      <button class="ghost" id="dl" ${rows.length ? "" : "disabled"}>Download CSV</button>
+    </div>
+    <p class="small muted" style="margin:0">“Copy links only” gives one TikTok link per line. “Copy as table” pastes straight into Google Sheets or Excel with all columns.</p>
+    <div class="card scroll-x" style="padding:6px 10px"><table><thead><tr><th>Creator</th><th>Country</th><th>Video</th><th>TikTok link</th><th>Posted</th></tr></thead><tbody>
+      ${rows.slice().reverse().map(r => `<tr><td><b>${esc(r.creator)}</b>${r.handle ? `<br><span class="small muted">@${esc(r.handle)}</span>` : ""}</td><td>${esc(r.country)}</td><td>${r.video}</td>
+        <td class="small"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a></td><td class="small muted">${fmt(r.posted_at)}</td></tr>`).join("")
+        || `<tr><td colspan="5" class="muted center" style="padding:30px">No TikTok links yet.</td></tr>`}
+    </tbody></table></div></div>`;
+  document.getElementById("since").onchange = (e) => { linksSince = e.target.value; renderLinks(); };
+  const clr = document.getElementById("clr"); if (clr) clr.onclick = () => { linksSince = ""; renderLinks(); };
+  document.getElementById("cpL").onclick = async () => { await navigator.clipboard.writeText(rows.map(r => r.url).join("\n")); toast(`${rows.length} links copied`); };
+  document.getElementById("cpT").onclick = async () => { await navigator.clipboard.writeText(tsv(true)); toast(`${rows.length} rows copied`); };
+  document.getElementById("dl").onclick = () => {
+    const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [["creator", "tiktok_handle", "country", "video", "tiktok_link", "posted_at"].join(",")]
+      .concat(rows.map(r => [r.creator, r.handle ? "@" + r.handle : "", r.country, r.video, r.url, r.posted_at].map(cell).join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\n")], { type: "text/csv" }));
+    a.download = `tiktok-links-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  };
 }
 
 // ---------- review ----------
@@ -222,7 +270,7 @@ document.addEventListener("keydown", (e) => {
 // ---------- creators ----------
 async function loadCreators() {
   const { data, error } = await sb.from("creators")
-    .select("id, name, email, tiktok_handle, country, token, video_count, locked_at, invited_at, last_seen_at, slots(slot_no, status, tiktok_url)")
+    .select("id, name, email, tiktok_handle, country, token, video_count, locked_at, invited_at, last_seen_at, slots(slot_no, status, tiktok_url, posted_at)")
     .order("name").limit(2000);
   if (error) return toast(error.message);
   creators = (data || []).map(c => ({ ...c, slots: (c.slots || []).sort((a, b) => a.slot_no - b.slot_no) }));
@@ -327,7 +375,6 @@ function mapRows(rows) {
 async function renderSetup() {
   const pane = document.getElementById("pane");
   const notInvited = creators.filter(c => !c.invited_at && c.email).length;
-  const clientLink = `${location.origin}${location.pathname.replace(/team\.html$/, "")}client.html?k=${campaign?.client_key}`;
   const { data: alerts } = await sb.from("alert_log").select("*").order("sent_at", { ascending: false }).limit(8);
   const { data: fails } = await sb.from("email_log").select("kind, recipient, error, sent_at").eq("ok", false).order("sent_at", { ascending: false }).limit(8);
   pane.innerHTML = `<div class="stack" style="max-width:760px">
@@ -345,10 +392,6 @@ async function renderSetup() {
     <section class="card stack"><h2>3 · Send invites</h2>
       <p class="muted small" style="margin:0">Each creator gets an email with their personal link. ${creators.length} creators in total, <b>${notInvited}</b> not invited yet.</p>
       <div class="row"><button id="invAll" ${notInvited ? "" : "disabled"}>Invite ${notInvited} creator${notInvited === 1 ? "" : "s"}</button><span class="small muted" id="invr"></span></div></section>
-
-    <section class="card stack"><h2>Client dashboard</h2>
-      <p class="muted small" style="margin:0">Read-only page for the client: only videos that are live on TikTok, with progress numbers. No reviews, emails or drafts are visible.</p>
-      <div class="row" style="flex-wrap:nowrap"><input type="text" readonly value="${esc(clientLink)}" id="cl"><button class="ghost" id="clc">Copy</button></div></section>
 
     <section class="card stack"><h2>Team alerts</h2>
       <p class="muted small" style="margin:0">Slack (#live-marketing-notifications) + email. Ivana: 05:00, 09:00, 13:00 · Anička: 09:00, 13:00, 17:00, 20:00 (Copenhagen time). Extra alert every time 20 more drafts are waiting, to whoever is on shift.</p>
@@ -393,7 +436,6 @@ async function renderSetup() {
     try { const r = await teamApi("invite", {}); document.getElementById("invr").textContent = `${r.sent} sent${r.failed ? `, ${r.failed} failed: ${r.error}` : ""}`; await loadCreators(); }
     catch (err) { document.getElementById("invr").textContent = err.message; e.target.disabled = false; }
   };
-  document.getElementById("clc").onclick = async () => { await navigator.clipboard.writeText(clientLink); toast("Client link copied"); };
   document.getElementById("ta").onclick = async (e) => {
     e.target.disabled = true; document.getElementById("tar").textContent = "Sending…";
     try { const r = await teamApi("test_alert"); document.getElementById("tar").textContent = `Slack: ${r.slack.ok ? "✓" : "✗ " + r.slack.error} · Email: ${r.email.ok ? "✓" : "✗ " + r.email.error}`; }
