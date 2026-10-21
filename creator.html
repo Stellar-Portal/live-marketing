@@ -4,27 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Your upload page · Stellar</title>
+<title>Stellar</title>
+<link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="theme-color" content="#000000">
 <link rel="stylesheet" href="style.css">
 <script src="config.js"></script>
 <style>
-  .top { margin-bottom: 20px; }
-  .brand { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; color: var(--accent); margin-bottom: 14px; }
-  .brief { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; white-space: pre-wrap; font-size: 14px; margin-bottom: 16px; }
+  /* Apple-style global bar: thin, black, white Stellar logo */
+  .gnav { background: #000; height: 48px; display: flex; align-items: center; justify-content: center; position: sticky; top: 0; z-index: 20; }
+  .gnav img { height: 17px; display: block; }
+  .top { padding: 36px 0 24px; }
+  .top h1 { margin-bottom: 6px; }
+  .brief { background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 16px 20px; white-space: pre-wrap; font-size: 15px; margin-bottom: 16px; }
   .stats.mini { margin-bottom: 16px; }
-  .stats.mini .stat { padding: 10px 14px; }
-  .stats.mini .stat b { font-size: 20px; }
+  .stats.mini .stat { padding: 14px 18px; }
+  .stats.mini .stat b { font-size: 22px; }
   .slots > * + * { margin-top: 12px; }
-  .slot { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
+  .slot { display: flex; flex-direction: column; gap: 16px; padding: 18px 20px; }
   .slot-head { display: flex; align-items: center; gap: 14px; }
-  .slot-thumb { width: 44px; height: 78px; object-fit: cover; border-radius: 6px; flex: none; background: #000; }
-  .slot-thumb.empty { background: var(--soft); border: 1px solid var(--line); color: var(--muted); display: grid; place-items: center; font-weight: 700; font-size: 18px; }
+  .slot-thumb { width: 44px; height: 78px; object-fit: cover; border-radius: var(--r-sm); flex: none; background: var(--tile); }
+  .slot-thumb.empty { background: var(--parchment); color: var(--muted); display: grid; place-items: center; font-family: var(--font-display); font-weight: 600; font-size: 18px; }
   .slot-title { flex: 1; min-width: 0; }
   .slot-title .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"></script>
 </head>
 <body>
+<header class="gnav"><img src="assets/stellar-white.png" alt="Stellar"></header>
 <div class="wrap" id="app"><p class="muted">Loading…</p></div>
 
 <script>
@@ -71,9 +78,8 @@ function render() {
   const { creator, campaign, slots } = state;
   const first = esc((creator.name || "").split(" ")[0]);
   let html = `<header class="top">
-      <div class="brand">${STAR} Stellar</div>
       <h1>Hi ${first}</h1>
-      <p class="muted" style="margin:0">Your page for the <b style="color:var(--ink)">${esc(campaign.name)}</b> campaign.</p>
+      <p class="muted" style="margin:0;font-size:17px">Your page for the ${esc(campaign.name)} campaign.</p>
     </header>`;
   if (campaign.brief) html += `<div class="brief">${esc(campaign.brief)}</div>`;
 
@@ -110,7 +116,7 @@ function render() {
   html += `<div class="stats mini" style="grid-template-columns:repeat(${campaign.drafts_enabled ? 3 : 2},1fr)">
       <div class="stat"><b>${creator.video_count}</b><span>Committed</span></div>
       ${campaign.drafts_enabled ? `<div class="stat"><b>${approved}</b><span>Approved</span></div>` : ""}
-      <div class="stat"><b>${live}</b><span>Live on TikTok</span></div>
+      <div class="stat"><b>${live}</b><span>Live</span></div>
     </div>`;
   if (!campaign.drafts_enabled) html += `<div class="note small">Post each video on TikTok, then paste its link below. In TikTok, tap Share, then Copy link.</div>`;
 
@@ -120,7 +126,6 @@ function render() {
   bindSlots();
 }
 
-const STAR = `<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-2px"><path fill="currentColor" d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z"/></svg>`;
 
 // small vertical thumbnail (or the video number when there's none yet)
 const thumbBox = (n, v) => v?.thumb_url
