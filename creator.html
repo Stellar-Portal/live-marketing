@@ -79,7 +79,6 @@ function render() {
   const first = esc((creator.name || "").split(" ")[0]);
   let html = `<header class="top">
       <h1>Hi ${first}</h1>
-      <p class="muted" style="margin:0;font-size:17px">Your page for the ${esc(campaign.name)} campaign.</p>
     </header>`;
   if (campaign.brief) html += `<div class="brief">${esc(campaign.brief)}</div>`;
 
