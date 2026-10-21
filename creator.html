@@ -62,7 +62,7 @@ function render() {
   if (!creator.locked) {
     html += `<div class="card stack" style="margin-top:18px">
       <div><h2>How many videos will you make?</h2>
-      <p class="muted small" style="margin:0">Choose up to 3. Once you confirm, this number is locked and you'll upload exactly that many drafts.</p></div>
+      <p class="muted small" style="margin:0">Choose up to 3. Once you confirm, this number is locked and you'll ${campaign.drafts_enabled ? "upload exactly that many drafts" : "send exactly that many TikTok links"}.</p></div>
       <div class="choice">
         ${[1,2,3].map(n => `<button type="button" data-n="${n}">${n}<span>${n === 1 ? "video" : "videos"}</span></button>`).join("")}
       </div>
@@ -89,7 +89,8 @@ function render() {
 
   const live = slots.filter(s => s.status === "posted").length;
   const approved = slots.filter(s => ["approved","posted"].includes(s.status)).length;
-  html += `<p class="muted" style="margin:4px 0 18px">You committed to <b>${creator.video_count}</b> video${creator.video_count > 1 ? "s" : ""} · ${approved} approved · ${live} live on TikTok</p>`;
+  html += `<p class="muted" style="margin:4px 0 18px">You committed to <b>${creator.video_count}</b> video${creator.video_count > 1 ? "s" : ""}${campaign.drafts_enabled ? ` · ${approved} approved` : ""} · ${live} live on TikTok</p>`;
+  if (!campaign.drafts_enabled) html += `<div class="note small" style="margin-bottom:14px">Post each video on TikTok, then paste its link below. Tip: in TikTok tap <b>Share → Copy link</b>.</div>`;
 
   html += `<div class="stack">` + slots.map(slotCard).join("") + `</div>`;
   html += `<p class="muted small center" style="margin-top:28px">Questions? Reply to the email you got from us.<br>This page is personal to you – please don't share the link.</p>`;
@@ -102,6 +103,18 @@ function slotCard(s) {
   const last = s.versions[s.versions.length - 1];
   const up = uploading[n];
   let body = "";
+
+  if (!state.campaign.drafts_enabled && !up) {
+    // no review step: straight to the TikTok link
+    if (s.status === "posted") body += `<p style="margin:0" class="small">Your TikTok: <a href="${esc(s.tiktok_url)}" target="_blank" rel="noopener">${esc(s.tiktok_url)}</a></p>`;
+    body += `<form class="row" data-link="${n}" style="flex-wrap:nowrap">
+      <input type="url" inputmode="url" placeholder="https://www.tiktok.com/@you/video/…" value="${s.status === "posted" ? esc(s.tiktok_url) : ""}" required>
+      <button type="submit">${s.status === "posted" ? "Update" : "Send"}</button></form>
+      <div data-linkerr="${n}"></div>`;
+    return `<section class="card stack" id="slot${n}">
+      <div class="row spread"><h2 style="margin:0">Video ${n}</h2><span class="pill s-${s.status === "posted" ? "posted" : "empty"}">${s.status === "posted" ? "Live on TikTok" : "Link needed"}</span></div>
+      ${body}</section>`;
+  }
 
   if (up) {
     body = `<div class="stack">
@@ -131,7 +144,7 @@ function slotCard(s) {
 
   const hist = s.versions.length ? `<details><summary>History (${s.versions.length} version${s.versions.length > 1 ? "s" : ""})</summary><ul class="hist">${
     s.versions.slice().reverse().map(v => `<li>v${v.version_no} · ${esc(v.file_name || "")} · ${fmtDate(v.uploaded_at)} · <b>${
-      v.review_status === "pending" ? "waiting" : v.review_status === "approved" ? "approved" : "changes requested"}</b>${v.feedback ? `<br><span class="muted">${esc(v.feedback)}</span>` : ""}</li>`).join("")
+      v.review_status === "pending" ? "waiting" : v.review_status === "approved" ? "approved" : v.review_status === "skipped" ? "not needed" : "changes requested"}</b>${v.feedback ? `<br><span class="muted">${esc(v.feedback)}</span>` : ""}</li>`).join("")
   }</ul></details>` : "";
 
   return `<section class="card stack" id="slot${n}">
