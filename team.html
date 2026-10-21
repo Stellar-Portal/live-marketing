@@ -16,7 +16,7 @@
   .qi b { font-weight: 600; }
   video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; display: block; }
   .chips { display: flex; gap: 4px; flex-wrap: wrap; }
-  .kbd { font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--muted); font-weight: 500; }
+  #detail video { max-height: 56vh; }
   @media (max-width: 860px) { .review { grid-template-columns: 1fr; } .queue { max-height: 280px; } }
 </style>
 </head>
@@ -33,7 +33,7 @@ const ago = (iso) => { if (!iso) return ""; const m = Math.round((Date.now() - n
 const LABEL = { empty: "Not uploaded", pending: "To review", changes_requested: "Changes req.", approved: "Approved", posted: "Live" };
 function toast(msg, ms = 3000) { const d = document.createElement("div"); d.className = "toast"; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), ms); }
 
-let me = null, campaign = null, campaigns = [], tab = "review", queue = [], current = null, creators = [], filter = { q: "", s: "all" };
+let me = null, campaign = null, campaigns = [], tab = "review", queue = [], creators = [], filter = { q: "", s: "all" };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const draftsOn = () => campaign?.drafts_enabled !== false;
 
@@ -49,7 +49,7 @@ async function loadCampaigns() {
 async function switchCampaign(id) {
   campaign = campaigns.find(c => c.id === id) || campaign;
   store.set("slm:campaign", campaign.id);
-  current = null; filter = { q: "", s: "all" }; linksSince = "";
+  currentCid = null; urlCache = {}; filter = { q: "", s: "all" }; linksSince = "";
   if (!draftsOn() && tab === "review") tab = "links";
   app.querySelector("#pane") && (app.querySelector("#pane").innerHTML = `<p class="muted">Loading ${esc(campaign.name)}…</p>`);
   await refreshAll();
@@ -81,7 +81,11 @@ async function boot() {
   await loadCampaigns();
   if (!draftsOn()) tab = "links";
   await refreshAll();
-  setInterval(() => { if (tab === "review") loadQueue(true); }, 60000);
+  // refresh the queue every minute, but never while someone is typing feedback
+  setInterval(() => {
+    const typing = document.activeElement?.tagName === "TEXTAREA" || Object.values(fbDrafts).some(x => x && x.trim());
+    if (tab === "review" && !typing) loadQueue(true);
+  }, 60000);
 }
 
 function showLogin() {
@@ -129,7 +133,7 @@ function stats() {
     invited: creators.filter(c => c.invited_at).length,
     locked: creators.filter(c => c.locked_at).length,
     committed: slots.length,
-    pending: queue.length,
+    pending: queue.filter(v => !v.decision).length,
     approved: slots.filter(s => ["approved", "posted"].includes(s.status)).length,
     live: slots.filter(s => s.status === "posted").length,
   };
@@ -224,86 +228,150 @@ function renderLinks() {
   };
 }
 
-// ---------- review ----------
+// ---------- review (grouped by creator; decisions are staged, then sent as one email per creator) ----------
+let currentCid = null;   // creator currently open
+let urlCache = {};       // version id -> signed video URL
+const fbDrafts = {};     // version id -> feedback being typed (survives re-renders)
+
 async function loadQueue(rerender) {
   if (!campaign) { queue = []; return; }
   const { data, error } = await sb.from("versions")
-    .select("id, version_no, uploaded_at, file_name, size_bytes, storage_path, slot_id, slots!inner(slot_no, creator_id, creators!inner(name, tiktok_handle, country, email, campaign_id))")
+    .select("id, version_no, uploaded_at, file_name, size_bytes, storage_path, slot_id, decision, decision_feedback, decided_by, slots!inner(slot_no, creator_id, creators!inner(id, name, tiktok_handle, country, email, campaign_id))")
     .eq("review_status", "pending").eq("slots.creators.campaign_id", campaign.id)
-    .order("uploaded_at").limit(1000);
+    .order("uploaded_at").limit(2000);
   if (error) return toast(error.message);
   queue = data || [];
-  if (current && !queue.find(q => q.id === current.id)) current = null;
-  if (rerender && tab === "review") { const keep = current?.id; renderShell(); if (keep) select(keep, false); }
+  if (currentCid && !queue.some(v => v.slots.creator_id === currentCid)) currentCid = null;
+  if (rerender && tab === "review") renderShell();
+}
+
+function groups() {
+  const m = new Map();
+  for (const v of queue) {
+    const c = v.slots.creators;
+    if (!m.has(c.id)) m.set(c.id, { creator: c, items: [], oldest: v.uploaded_at });
+    m.get(c.id).items.push(v);
+  }
+  const list = [...m.values()].map(g => {
+    g.items.sort((a, b) => a.slots.slot_no - b.slots.slot_no);
+    g.decided = g.items.filter(v => v.decision).length;
+    g.ready = g.decided === g.items.length;
+    return g;
+  });
+  // undecided creators first (oldest waiting first), ready-to-send at the bottom
+  return list.sort((a, b) => (a.ready - b.ready) || a.oldest.localeCompare(b.oldest));
 }
 
 function renderReview() {
   const pane = document.getElementById("pane");
-  if (!queue.length) { pane.innerHTML = `<div class="card center muted" style="padding:48px">Nothing waiting for review 🎉</div>`; return; }
-  pane.innerHTML = `<div class="review">
-    <div class="card queue">${queue.map(v => {
-      const c = v.slots.creators;
-      return `<button class="qi ${current?.id === v.id ? "on" : ""}" data-v="${v.id}">
-        <b>${esc(c.name)}</b>${c.tiktok_handle ? ` <span class="muted small">@${esc(c.tiktok_handle.replace(/^@/, ""))}</span>` : ""}<br>
-        <span class="small muted">Video ${v.slots.slot_no} · v${v.version_no}${v.version_no > 1 ? " (resubmission)" : ""} · ${esc(c.country || "")} · waiting ${ago(v.uploaded_at)}</span></button>`;
-    }).join("")}</div>
-    <div class="card" id="detail"><p class="muted">Pick a draft from the list.</p></div></div>`;
-  pane.querySelectorAll("[data-v]").forEach(b => b.onclick = () => select(b.dataset.v));
-  select(current?.id || queue[0].id);
-}
-
-async function select(id, scroll = true) {
-  current = queue.find(q => q.id === id); if (!current) return;
-  document.querySelectorAll(".qi").forEach(b => b.classList.toggle("on", b.dataset.v === id));
-  const d = document.getElementById("detail"); if (!d) return;
-  const c = current.slots.creators;
-  d.innerHTML = `<p class="muted">Loading video…</p>`;
-  const [{ data: signed }, { data: hist }] = await Promise.all([
-    sb.storage.from("drafts").createSignedUrl(current.storage_path, 3600),
-    sb.from("versions").select("version_no, uploaded_at, review_status, feedback, reviewed_by").eq("slot_id", current.slot_id).neq("id", id).order("version_no"),
-  ]);
-  if (current.id !== id) return;
-  const url = signed?.signedUrl;
-  d.innerHTML = `<div class="stack">
-    <div class="row spread"><div><h2 style="margin:0">${esc(c.name)} · Video ${current.slots.slot_no}</h2>
-      <div class="small muted">Version ${current.version_no} · uploaded ${fmt(current.uploaded_at)} · ${esc(c.country || "")}${c.tiktok_handle ? ` · <a href="https://www.tiktok.com/@${esc(c.tiktok_handle.replace(/^@/, ""))}" target="_blank" rel="noopener">@${esc(c.tiktok_handle.replace(/^@/, ""))}</a>` : ""}</div></div>
-      ${url ? `<a class="btn ghost sm" style="padding:6px 10px;font-size:13px" href="${url}&download=${encodeURIComponent(current.file_name || "draft.mp4")}">Download</a>` : ""}</div>
-    ${url ? `<video src="${url}" controls playsinline preload="metadata"></video><div class="small muted">If the video doesn't play in your browser (some iPhone .mov files), use Download.</div>` : `<div class="error">Couldn't load the video.</div>`}
-    ${(hist || []).length ? `<details open><summary>Earlier versions</summary><ul class="hist">${hist.map(h => `<li>v${h.version_no} · ${fmt(h.uploaded_at)} · <b>${h.review_status === "approved" ? "approved" : h.review_status === "pending" ? "waiting" : "changes requested"}</b>${h.reviewed_by ? ` by ${esc(h.reviewed_by)}` : ""}${h.feedback ? `<br>${esc(h.feedback)}` : ""}</li>`).join("")}</ul></details>` : ""}
-    <textarea id="fb" placeholder="Feedback for the creator (required to request changes, optional when approving)"></textarea>
-    <div class="row">
-      <button class="ok" id="ap">Approve <span class="kbd" style="color:#d7eedf;border-color:#5a9c78">A</span></button>
-      <button class="bad" id="ch">Request changes</button>
-      <span class="small muted" id="rs"></span>
+  const gs = groups();
+  if (!gs.length) { pane.innerHTML = `<div class="card center muted" style="padding:48px">Nothing waiting for review 🎉</div>`; return; }
+  const ready = gs.filter(g => g.ready);
+  if (!currentCid || !gs.find(g => g.creator.id === currentCid)) currentCid = (gs.find(g => !g.ready) || gs[0]).creator.id;
+  pane.innerHTML = `
+    <div class="row spread" style="margin-bottom:12px">
+      <span class="small muted">${gs.length} creator${gs.length === 1 ? "" : "s"} with drafts · ${gs.length - ready.length} still to decide · ${ready.length} ready to send</span>
+      <button id="sendAll" ${ready.length ? "" : "disabled"}>Send all ready (${ready.length})</button>
     </div>
-    <div class="small muted">The creator gets an email straight away.</div></div>`;
-  document.getElementById("ap").onclick = () => decide("approve");
-  document.getElementById("ch").onclick = () => decide("changes");
-  if (scroll && window.innerWidth < 860) d.scrollIntoView({ behavior: "smooth" });
+    <div class="review">
+      <div class="card queue">${gs.map(g => `
+        <button class="qi ${g.creator.id === currentCid ? "on" : ""}" data-cid="${g.creator.id}">
+          <div class="row spread" style="flex-wrap:nowrap"><b>${esc(g.creator.name)}</b>
+            ${g.ready ? `<span class="pill s-approved">Ready to send</span>` : g.decided ? `<span class="pill s-changes_requested">${g.decided}/${g.items.length} decided</span>` : `<span class="pill s-pending">${g.items.length} to review</span>`}</div>
+          <span class="small muted">${g.items.map(v => `V${v.slots.slot_no}${v.version_no > 1 ? ` (v${v.version_no})` : ""}`).join(", ")} · ${esc(g.creator.country || "")} · waiting ${ago(g.oldest)}</span>
+        </button>`).join("")}</div>
+      <div class="card" id="detail"></div>
+    </div>`;
+  pane.querySelectorAll("[data-cid]").forEach(b => b.onclick = () => { currentCid = b.dataset.cid; renderReview(); });
+  document.getElementById("sendAll").onclick = () => sendBatch(ready.map(g => g.creator.id), `Send one email to each of the ${ready.length} creator${ready.length === 1 ? "" : "s"} marked “Ready to send”?`);
+  renderCreatorDetail(gs.find(g => g.creator.id === currentCid));
 }
 
-async function decide(decision) {
-  const fb = document.getElementById("fb").value.trim();
-  if (decision === "changes" && !fb) { document.getElementById("fb").focus(); return toast("Write what should change first."); }
-  const btns = document.querySelectorAll("#ap, #ch"); btns.forEach(b => b.disabled = true);
-  document.getElementById("rs").textContent = "Saving…";
+async function renderCreatorDetail(g) {
+  const d = document.getElementById("detail");
+  if (!g) { d.innerHTML = `<p class="muted">Pick a creator from the list.</p>`; return; }
+  const c = g.creator;
+  const handle = (c.tiktok_handle || "").replace(/^@/, "");
+  // signed video URLs (1 hour) + earlier versions of these videos
+  const need = g.items.filter(v => !urlCache[v.id]);
+  const [signedRes, histRes] = await Promise.all([
+    need.length ? sb.storage.from("drafts").createSignedUrls(need.map(v => v.storage_path), 3600) : Promise.resolve({ data: [] }),
+    sb.from("versions").select("slot_id, version_no, uploaded_at, review_status, feedback, reviewed_by")
+      .in("slot_id", g.items.map(v => v.slot_id)).neq("review_status", "pending").order("version_no"),
+  ]);
+  (signedRes.data || []).forEach((s, i) => { if (s?.signedUrl) urlCache[need[i].id] = s.signedUrl; });
+  if (currentCid !== c.id) return;
+  const hist = histRes.data || [];
+
+  const card = (v) => {
+    const url = urlCache[v.id];
+    const earlier = hist.filter(h => h.slot_id === v.slot_id);
+    const decided = v.decision
+      ? `<div class="${v.decision === "approve" ? "note" : "feedback"}" style="${v.decision === "approve" ? "background:var(--ok-bg)" : ""}">
+           <b>${v.decision === "approve" ? "✅ Approved" : "✏️ Changes requested"}</b>${v.decided_by ? ` <span class="small muted">· ${esc(v.decided_by)}</span>` : ""}
+           ${v.decision_feedback ? `<div style="margin-top:6px;white-space:pre-wrap">${esc(v.decision_feedback)}</div>` : ""}
+         </div>
+         <div><button class="ghost sm" data-undo="${v.id}">Change decision</button></div>`
+      : `<textarea data-fb="${v.id}" placeholder="Feedback for Video ${v.slots.slot_no} (required to request changes, optional when approving)">${esc(fbDrafts[v.id] || "")}</textarea>
+         <div class="row"><button class="ok sm" data-approve="${v.id}">Approve</button><button class="bad sm" data-changes="${v.id}">Request changes</button></div>`;
+    return `<section class="stack" style="border-top:1px solid var(--line);padding-top:14px">
+      <div class="row spread"><div><b>Video ${v.slots.slot_no}</b> <span class="small muted">· version ${v.version_no}${v.version_no > 1 ? " (resubmission)" : ""} · uploaded ${fmt(v.uploaded_at)}</span></div>
+        ${url ? `<a class="btn ghost sm" style="padding:6px 10px;font-size:13px" href="${url}&download=${encodeURIComponent(v.file_name || "draft.mp4")}">Download</a>` : ""}</div>
+      ${url ? `<video src="${url}" controls playsinline preload="metadata"></video>` : `<div class="error small">Couldn't load this video.</div>`}
+      ${earlier.length ? `<details><summary>Earlier versions (${earlier.length})</summary><ul class="hist">${earlier.map(h => `<li>v${h.version_no} · ${fmt(h.uploaded_at)} · <b>${h.review_status === "approved" ? "approved" : h.review_status === "skipped" ? "not needed" : "changes requested"}</b>${h.reviewed_by ? ` by ${esc(h.reviewed_by)}` : ""}${h.feedback ? `<br>${esc(h.feedback)}` : ""}</li>`).join("")}</ul></details>` : ""}
+      ${decided}
+    </section>`;
+  };
+
+  const undecided = g.items.length - g.decided;
+  d.innerHTML = `<div class="stack">
+    <div><h2 style="margin:0">${esc(c.name)}</h2>
+      <div class="small muted">${esc(c.country || "")}${handle ? ` · <a href="https://www.tiktok.com/@${esc(handle)}" target="_blank" rel="noopener">@${esc(handle)}</a>` : ""} · ${esc(c.email || "no email on file")}</div></div>
+    ${g.items.map(card).join("")}
+    <div class="small muted">If a video doesn't play in your browser (some iPhone .mov files), use Download.</div>
+    <div class="note stack" style="margin-top:6px">
+      <div class="small">${g.decided ? `<b>${g.decided} of ${g.items.length}</b> decided.` : "Nothing decided yet."} Nothing reaches ${esc(c.name.split(" ")[0])} until you press Send: then all decisions go out together in <b>one email</b>.${undecided && g.decided ? ` ${undecided} undecided video${undecided === 1 ? "" : "s"} will stay in the queue.` : ""}</div>
+      <div><button id="sendOne" ${g.decided ? "" : "disabled"}>Send ${g.decided ? `${g.decided} decision${g.decided === 1 ? "" : "s"} ` : ""}to ${esc(c.name.split(" ")[0])}</button></div>
+    </div></div>`;
+
+  d.querySelectorAll("[data-fb]").forEach(t => t.oninput = () => { fbDrafts[t.dataset.fb] = t.value; });
+  d.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => stage(b.dataset.approve, "approve"));
+  d.querySelectorAll("[data-changes]").forEach(b => b.onclick = () => stage(b.dataset.changes, "changes"));
+  d.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => stage(b.dataset.undo, null));
+  document.getElementById("sendOne").onclick = () => sendBatch([c.id], undecided ? `Send ${g.decided} decision${g.decided === 1 ? "" : "s"} to ${c.name} now? ${undecided} undecided video${undecided === 1 ? "" : "s"} will stay in the queue.` : null);
+  if (window.innerWidth < 860) d.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function stage(versionId, decision) {
+  const v = queue.find(q => q.id === versionId); if (!v) return;
+  const ta = document.querySelector(`[data-fb="${versionId}"]`);
+  const feedback = decision === null ? "" : (ta?.value || "").trim();
+  if (decision === "changes" && !feedback) { ta?.focus(); return toast("Write what should change first."); }
   try {
-    const r = await teamApi("review", { version_id: current.id, decision, feedback: fb });
-    const idx = queue.findIndex(q => q.id === current.id);
-    queue.splice(idx, 1);
-    const next = queue[idx] || queue[idx - 1] || null;
-    current = next;
-    toast(decision === "approve" ? "Approved" : "Feedback sent" + (r.email?.ok ? "" : " (email not sent: " + (r.email?.error || "?") + ")"), r.email?.ok ? 2500 : 6000);
-    loadCreators().then(() => { renderShell(); });
-  } catch (e) { toast(e.message, 5000); btns.forEach(b => b.disabled = false); document.getElementById("rs").textContent = ""; if (/already reviewed/.test(e.message)) loadQueue(true); }
+    await teamApi("decide", { version_id: versionId, decision, feedback });
+    if (decision === null) { fbDrafts[versionId] = v.decision_feedback || ""; Object.assign(v, { decision: null, decision_feedback: null, decided_by: null }); }
+    else { delete fbDrafts[versionId]; Object.assign(v, { decision, decision_feedback: feedback || null, decided_by: me.name }); }
+    const g = groups().find(x => x.creator.id === currentCid);
+    renderShell();
+    if (g?.ready) toast(`All of ${g.creator.name}'s videos decided – press Send when you're ready.`, 3500);
+  } catch (e) { toast(e.message, 5000); if (/already sent/.test(e.message)) loadQueue(true); }
 }
 
-document.addEventListener("keydown", (e) => {
-  if (tab !== "review" || !current || e.target.matches("textarea, input")) return;
-  if (e.key === "a" || e.key === "A") decide("approve");
-  if (e.key === "ArrowDown" || e.key === "j") { const i = queue.findIndex(q => q.id === current.id); if (queue[i + 1]) select(queue[i + 1].id, false); }
-  if (e.key === "ArrowUp" || e.key === "k") { const i = queue.findIndex(q => q.id === current.id); if (queue[i - 1]) select(queue[i - 1].id, false); }
-});
+async function sendBatch(creatorIds, confirmText) {
+  if (!creatorIds.length) return;
+  if (confirmText && !confirm(confirmText)) return;
+  document.querySelectorAll("#sendAll, #sendOne").forEach(b => { b.disabled = true; b.textContent = "Sending…"; });
+  try {
+    const r = await teamApi("send", { creator_ids: creatorIds });
+    const bits = [`${r.emailed} email${r.emailed === 1 ? "" : "s"} sent`];
+    if (r.failed) bits.push(`${r.failed} failed (${r.error})`);
+    if (r.no_email) bits.push(`${r.no_email} without an email address – decisions applied, tell them yourself`);
+    toast(bits.join(" · "), r.failed || r.no_email ? 8000 : 3500);
+    currentCid = null;
+    await Promise.all([loadQueue(false), loadCreators()]);
+    renderShell();
+  } catch (e) { toast(e.message, 6000); renderShell(); }
+}
 
 // ---------- creators ----------
 async function loadCreators() {
