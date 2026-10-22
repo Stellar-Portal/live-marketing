@@ -134,3 +134,7 @@ tr:last-child td { border-bottom: none; }
 .tabs button.on { background: var(--canvas); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 0.5px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.08); }
 
 @media (max-width: 560px) { h1 { font-size: 30px; } .card { padding: 18px; } }
+
+/* TikTok + Instagram link fields */
+form.links label { display: block; }
+form.links label input { display: block; width: 100%; margin-top: 4px; }
