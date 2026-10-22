@@ -585,6 +585,13 @@ async function renderSetup() {
       <p class="muted small" style="margin:0">Each creator in ${esc(campaign.name)} gets an email with their personal link. ${creators.length} creators in this campaign, <b>${notInvited}</b> not invited yet.</p>
       <div class="row"><button id="invAll" ${notInvited ? "" : "disabled"}>Invite ${notInvited} creator${notInvited === 1 ? "" : "s"}</button><span class="small muted" id="invr"></span></div></section>
 
+    <section class="card stack"><h2>4 · Reminders to creators</h2>
+      <label class="row" style="gap:10px;align-items:flex-start;cursor:pointer;flex-wrap:nowrap">
+        <input type="checkbox" id="rem" ${campaign.reminders_enabled ? "checked" : ""} style="width:20px;height:20px;margin-top:2px;flex:none">
+        <span><b>Send reminders every 6 hours</b><br><span class="small muted">One email per creator listing everything still open: approved videos to post and link, drafts not uploaded yet, and drafts that need a new version. Only during the day (9:00–22:00 ${esc(campaign.timezone || "Asia/Singapore")} time), never within 6 hours of another email from us, and nothing to creators who are only waiting for our review. No CC.</span></span>
+      </label>
+      <div class="row"><button class="ghost" id="remPrev">Who would get one right now?</button><span class="small muted" id="remr"></span></div></section>
+
     <section class="card stack"><h2>Team alerts</h2>
       <p class="muted small" style="margin:0">Slack (#live-marketing-notifications) + email. Ivana: 05:00, 09:00, 13:00 · Anička: 09:00, 13:00, 17:00, 20:00 (Copenhagen time). Extra alert every time 20 more drafts are waiting, to whoever is on shift. Counts all campaigns with drafts on, split by market.</p>
       <div class="row"><button class="ghost" id="ta">Send test alert</button><span class="small muted" id="tar"></span></div>
@@ -605,6 +612,24 @@ async function renderSetup() {
     if (error) return toast(error.message);
     Object.assign(campaign, { name, brief, drafts_enabled });
     toast("Saved"); renderShell();
+  };
+  document.getElementById("rem").onchange = async (e) => {
+    const on = e.target.checked;
+    if (on && !confirm(`Start reminders for ${campaign.name}? The first ones go out within the hour (during ${campaign.name} daytime).`)) { e.target.checked = false; return; }
+    const { error } = await sb.from("campaigns").update({ reminders_enabled: on }).eq("id", campaign.id);
+    if (error) { e.target.checked = !on; return toast(error.message); }
+    campaign.reminders_enabled = on; toast(on ? "Reminders on" : "Reminders off");
+  };
+  document.getElementById("remPrev").onclick = async (e) => {
+    const out = document.getElementById("remr"); e.target.disabled = true; out.textContent = "Checking…";
+    try {
+      const r = await teamApi("reminder_preview", { campaign_id: campaign.id });
+      const x = (r.report || [])[0] || {};
+      const parts = [x.post && `${x.post} approved video${x.post === 1 ? "" : "s"} to post`, x.upload && `${x.upload} draft${x.upload === 1 ? "" : "s"} not uploaded`,
+        x.fix && `${x.fix} to fix`, x.commit && `${x.commit} haven't chosen 2 or 3 yet`, x.link && `${x.link} link${x.link === 1 ? "" : "s"} missing`].filter(Boolean);
+      out.innerHTML = `<b>${x.creators || 0} creator${x.creators === 1 ? "" : "s"}</b>${parts.length ? ": " + parts.join(", ") : ""}`;
+    } catch (err) { out.textContent = err.message; }
+    e.target.disabled = false;
   };
   document.getElementById("impf").onchange = async (e) => { const f = e.target.files[0]; if (f) document.getElementById("imp").value = await f.text(); };
   document.getElementById("impb").onclick = () => {
