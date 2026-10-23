@@ -138,3 +138,7 @@ tr:last-child td { border-bottom: none; }
 /* TikTok + Instagram link fields */
 form.links label { display: block; }
 form.links label input { display: block; width: 100%; margin-top: 4px; }
+
+/* destructive action */
+button.ghost.danger { color: #c4271b; }
+button.ghost.danger:hover { border-color: #c4271b; }

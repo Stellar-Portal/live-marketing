@@ -504,6 +504,7 @@ function renderCreators() {
         <button class="ghost sm" data-copy="${c.id}">Copy link</button>
         ${c.email ? `<button class="ghost sm" data-inv="${c.id}">${c.invited_at ? "Resend" : "Invite"}</button>` : ""}
         ${c.locked_at ? `<button class="ghost sm" data-unlock="${c.id}" title="Let them change their number of videos">Unlock</button>` : ""}
+        <button class="ghost sm danger" data-remove="${c.id}" title="Remove this creator from the campaign">Remove</button>
       </div></td></tr>`).join("") || `<tr><td colspan="6" class="muted center" style="padding:30px">No creators match.</td></tr>`}
     </tbody></table></div>`;
   const qi = document.getElementById("q");
@@ -514,6 +515,14 @@ function renderCreators() {
   pane.querySelectorAll("[data-inv]").forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { const r = await teamApi("invite", { creator_ids: [b.dataset.inv] }); toast(r.sent ? "Invite sent" : "Not sent: " + (r.error || "?"), r.sent ? 2500 : 6000); await loadCreators(); renderCreators(); }
+    catch (e) { toast(e.message); b.disabled = false; }
+  });
+  pane.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => {
+    const c = creators.find(x => x.id === b.dataset.remove);
+    const live = c.slots.filter(s => s.status === "posted").length;
+    if (!confirm(`Remove ${c.name} from ${campaign.name}?\n\n• Their personal link stops working\n• They won't get any more reminders or emails\n• Their drafts${live ? ` and ${live} posted link${live === 1 ? "" : "s"}` : ""} are deleted${live ? " (copy the links from Posted links first if you need them)" : ""}\n\nThis can't be undone.`)) return;
+    b.disabled = true;
+    try { await teamApi("remove_creator", { creator_ids: [c.id] }); toast(`${c.name} removed`); await loadCreators(); await loadQueue(); renderShell(); }
     catch (e) { toast(e.message); b.disabled = false; }
   });
   pane.querySelectorAll("[data-unlock]").forEach(b => b.onclick = async () => {
