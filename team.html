@@ -602,7 +602,7 @@ async function renderSetup() {
       <div class="row"><button class="ghost" id="remPrev">Who would get one right now?</button><span class="small muted" id="remr"></span></div></section>
 
     <section class="card stack"><h2>Team alerts</h2>
-      <p class="muted small" style="margin:0">Slack (#live-marketing-notifications) + email. Ivana: 05:00, 09:00, 13:00 · Anička: 09:00, 13:00, 17:00, 20:00 (Copenhagen time). Extra alert every time 20 more drafts are waiting, to whoever is on shift. Counts all campaigns with drafts on, split by market.</p>
+      <p class="muted small" style="margin:0">Slack (#live-marketing-notifications) + email. Ivana &amp; Ming: 05:00, 09:00, 13:00 · Anička: 09:00, 13:00, 17:00, 20:00 (Copenhagen time). Extra alert every time 20 more drafts are waiting, to whoever is on shift. Counts all campaigns with drafts on, split by market.</p>
       <div class="row"><button class="ghost" id="ta">Send test alert</button><span class="small muted" id="tar"></span></div>
       ${(alerts || []).length ? `<table><thead><tr><th>Sent</th><th>Type</th><th>Waiting</th><th>To</th><th>Result</th></tr></thead><tbody>${alerts.map(a => `<tr><td class="small">${fmt(a.sent_at)}</td><td class="small">${a.kind}</td><td>${a.pending ?? ""}</td><td class="small">${esc(a.recipients || "")}</td><td class="small">${a.ok ? "✓" : a.ok === false ? "✗ " + esc(a.detail || "") : "…"}${a.ok && a.detail ? " " + esc(a.detail) : ""}</td></tr>`).join("")}</tbody></table>` : `<p class="small muted" style="margin:0">No alerts sent yet.</p>`}
     </section>
