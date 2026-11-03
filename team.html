@@ -83,6 +83,14 @@ function toast(msg, ms = 3000) { const d = document.createElement("div"); d.clas
 let me = null, campaign = null, campaigns = [], tab = "review", queue = [], creators = [], filter = { q: "", s: "all" };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const draftsOn = () => campaign?.drafts_enabled !== false;
+const isDone = () => !!campaign?.completed_at;
+const attending = (c) => c.attendance !== "not_attending";
+const fmtDay = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+// feedback questionnaire labels (same keys as creator.html)
+const SURVEY_Q = {
+  attended: [["heard_before", "Heard of ONE OR EIGHT before?"], ["concert", "Concert experience"], ["following", "Following / listening since?"], ["stellar", "Working with Stellar"], ["better", "Could be better"], ["future", "Future opportunities"]],
+  not_attending: [["reason", "Why they couldn't go"], ["easier", "What would have made it easier"], ["prevented", "What kept them from going"], ["future", "Future campaigns?"], ["other", "Anything else"]],
+};
 
 async function loadCampaigns() {
   const { data, error } = await sb.from("campaigns").select("*").eq("active", true).order("sort_order").order("created_at");
@@ -171,14 +179,23 @@ function showLogin() {
 }
 
 // ---------- shell ----------
-async function refreshAll() { await Promise.all([loadQueue(false), loadCreators()]); renderShell(); }
+let feedbackCount = null;
+async function loadFeedbackCount() {
+  if (!isDone()) { feedbackCount = null; return; }
+  const { count } = await sb.from("survey_responses").select("id", { count: "exact", head: true }).eq("campaign_id", campaign.id);
+  feedbackCount = count ?? 0;
+}
+async function refreshAll() { await Promise.all([loadQueue(false), loadCreators(), loadFeedbackCount()]); renderShell(); }
 
 function stats() {
-  const slots = creators.flatMap(c => c.slots || []);
+  const going = creators.filter(attending);
+  const slots = going.flatMap(c => c.slots || []);
   return {
-    creators: creators.length,
-    invited: creators.filter(c => c.invited_at).length,
-    locked: creators.filter(c => c.locked_at).length,
+    all: creators.length,
+    out: creators.length - going.length,
+    creators: going.length,
+    invited: going.filter(c => c.invited_at).length,
+    locked: going.filter(c => c.locked_at).length,
     committed: slots.length,
     pending: queue.filter(v => !v.decision).length,
     approved: slots.filter(s => ["approved", "posted"].includes(s.status)).length,
@@ -193,10 +210,11 @@ function renderShell() {
   const TABS = [
     on ? ["review", "Review queue", s.pending] : null,
     ["links", "Posted links", s.live],
-    ["creators", "Creators", s.creators],
+    ["creators", "Creators", s.all],
+    isDone() ? ["feedback", "Feedback", feedbackCount] : null,
     ["setup", "Setup", null],
   ].filter(Boolean);
-  const ICON = { review: `<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M10 9l5 2.5-5 2.5z"/></svg>`, links: `<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>`, creators: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/></svg>`, setup: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>` };
+  const ICON = { review: `<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M10 9l5 2.5-5 2.5z"/></svg>`, links: `<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>`, creators: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/></svg>`, feedback: `<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>`, setup: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>` };
   const title = (TABS.find(t => t[0] === tab) || TABS[0])[1];
   app.innerHTML = `
     <aside class="sidebar">
@@ -204,7 +222,7 @@ function renderShell() {
       <nav class="nav">
         <div class="nav-group">
           <div class="nav-label">Campaigns</div>
-          ${campaigns.map(c => `<button class="nav-item ${c.id === campaign?.id ? "on" : ""}" data-camp="${c.id}"><span class="dot ${c.drafts_enabled === false ? "off" : ""}"></span>${esc(c.name)}<em>${c.drafts_enabled === false ? "Links" : "Drafts"}</em></button>`).join("")}
+          ${campaigns.map(c => `<button class="nav-item ${c.id === campaign?.id ? "on" : ""}" data-camp="${c.id}"><span class="dot ${c.drafts_enabled === false || c.completed_at ? "off" : ""}"></span>${esc(c.name)}<em>${c.completed_at ? "Done" : c.drafts_enabled === false ? "Links" : "Drafts"}</em></button>`).join("")}
           <button class="nav-item add" id="newCamp">+ New campaign</button>
         </div>
         ${campaign ? `<div class="nav-group">
@@ -217,11 +235,11 @@ function renderShell() {
     <div class="content"><main>
       ${campaign ? `
       <div class="page-head">
-        <div><div class="muted small">${esc(campaign.name)}, ${on ? "drafts on" : "links only"}</div><h1>${title}</h1></div>
+        <div><div class="muted small">${esc(campaign.name)}, ${isDone() ? `completed ${fmtDay(campaign.completed_at)}` : on ? "drafts on" : "links only"}</div><h1>${title}</h1></div>
       </div>
       <div class="stats" style="margin-bottom:28px">
         ${on ? `<div class="stat"><b>${s.pending}</b><span>Waiting for review</span></div>` : ""}
-        <div class="stat"><b>${s.locked}/${s.creators}</b><span>Creators committed</span></div>
+        <div class="stat"><b>${s.locked}/${s.creators}</b><span>Creators committed${s.out ? ` · ${s.out} couldn't attend` : ""}</span></div>
         <div class="stat"><b>${s.committed}</b><span>Videos committed</span></div>
         ${on ? `<div class="stat"><b>${s.approved}</b><span>Approved</span></div>` : ""}
         <div class="stat"><b>${s.live}</b><span>Videos live</span></div>
@@ -239,7 +257,8 @@ function renderShell() {
   };
   if (!campaign) return;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; renderShell(); });
-  if (tab === "review") renderReview(); else if (tab === "links") renderLinks(); else if (tab === "creators") renderCreators(); else renderSetup();
+  if (tab === "feedback" && !isDone()) tab = "setup";
+  if (tab === "review") renderReview(); else if (tab === "links") renderLinks(); else if (tab === "creators") renderCreators(); else if (tab === "feedback") renderFeedback(); else renderSetup();
 }
 
 // ---------- posted links (for copying into the external dashboard) ----------
@@ -293,6 +312,40 @@ function renderLinks() {
   };
 }
 
+// ---------- feedback questionnaire answers ----------
+async function renderFeedback() {
+  const pane = document.getElementById("pane");
+  pane.innerHTML = `<p class="muted">Loading…</p>`;
+  const { data, error } = await sb.from("survey_responses").select("attended, answers, submitted_at, creators(name, email, tiktok_handle)")
+    .eq("campaign_id", campaign.id).order("submitted_at", { ascending: false }).limit(2000);
+  if (error) { pane.innerHTML = `<div class="error">${esc(error.message)}</div>`; return; }
+  const went = (data || []).filter(r => r.attended), missed = (data || []).filter(r => !r.attended);
+  const table = (rows, qs) => rows.length ? `<div class="card scroll-x" style="padding:6px 10px"><table><thead><tr><th>Creator</th>${qs.map(q => `<th>${q[1]}</th>`).join("")}<th>Sent</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td><b>${esc(r.creators?.name || "")}</b><br><span class="small muted">${esc(r.creators?.email || "")}</span></td>
+      ${qs.map(([k]) => `<td class="small" style="min-width:${r.attended ? 220 : k === "future" ? 70 : 180}px;white-space:pre-wrap">${esc(r.answers[k] ?? "")}</td>`).join("")}
+      <td class="small muted">${fmt(r.submitted_at)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="card muted center" style="padding:24px">No answers yet.</div>`;
+  pane.innerHTML = `<div class="stack">
+    <div class="stats" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat"><b>${went.length}</b><span>Answers from people who went</span></div>
+      <div class="stat"><b>${(data || []).length}</b><span>Answers in total</span></div>
+      <div class="stat"><b>${missed.length}</b><span>Answers from people who couldn't go</span></div>
+    </div>
+    <div class="row"><button class="ghost" id="fbcsv" ${data.length ? "" : "disabled"}>Download all answers (CSV)</button><span class="small muted">Send or resend the questionnaire from Setup → 5.</span></div>
+    <h2>People who went</h2>${table(went, SURVEY_Q.attended)}
+    <h2>People who couldn't attend</h2>${table(missed, SURVEY_Q.not_attending)}
+  </div>`;
+  document.getElementById("fbcsv").onclick = () => {
+    const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const A = SURVEY_Q.attended, N = SURVEY_Q.not_attending;
+    const lines = [["creator", "email", "tiktok_handle", "went", ...A.map(k => k[1]), ...N.map(k => "Couldn't attend: " + k[1]), "submitted_at"].map(cell).join(",")]
+      .concat((data || []).map(r => [r.creators?.name, r.creators?.email, r.creators?.tiktok_handle, r.attended ? "yes" : "no",
+        ...A.map(([k]) => r.attended ? r.answers[k] : ""), ...N.map(([k]) => r.attended ? "" : r.answers[k]), r.submitted_at].map(cell).join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv" }));
+    a.download = `feedback-${(campaign.name || "").replace(/\W+/g, "-").toLowerCase()}.csv`; a.click();
+  };
+}
+
 // ---------- review (grouped by creator; decisions are staged, then sent as one email per creator) ----------
 let currentCid = null;   // creator currently open
 let urlCache = {};       // version id -> signed video URL
@@ -302,11 +355,11 @@ const fbDrafts = {};     // version id -> feedback being typed (survives re-rend
 async function loadQueue(rerender) {
   if (!campaign) { queue = []; return; }
   const { data, error } = await sb.from("versions")
-    .select("id, version_no, uploaded_at, file_name, size_bytes, storage_path, thumb_path, slot_id, decision, decision_feedback, decided_by, slots!inner(slot_no, creator_id, creators!inner(id, name, tiktok_handle, country, email, campaign_id))")
+    .select("id, version_no, uploaded_at, file_name, size_bytes, storage_path, thumb_path, slot_id, decision, decision_feedback, decided_by, slots!inner(slot_no, creator_id, creators!inner(id, name, tiktok_handle, country, email, campaign_id, attendance))")
     .eq("review_status", "pending").eq("slots.creators.campaign_id", campaign.id)
     .order("uploaded_at").limit(2000);
   if (error) return toast(error.message);
-  queue = data || [];
+  queue = (data || []).filter(v => v.slots.creators.attendance !== "not_attending");
   if (currentCid && !queue.some(v => v.slots.creator_id === currentCid)) currentCid = null;
   if (rerender && tab === "review") renderShell();
 }
@@ -452,7 +505,7 @@ async function sendBatch(creatorIds, confirmText) {
 async function loadCreators() {
   if (!campaign) { creators = []; return; }
   const { data, error } = await sb.from("creators")
-    .select("id, name, email, tiktok_handle, country, token, video_count, locked_at, invited_at, last_seen_at, slots(slot_no, status, tiktok_url, instagram_url, posted_at, links_updated_at)")
+    .select("id, name, email, tiktok_handle, country, token, video_count, locked_at, invited_at, last_seen_at, attendance, survey_sent_at, slots(slot_no, status, tiktok_url, instagram_url, posted_at, links_updated_at)")
     .eq("campaign_id", campaign?.id).order("name").limit(2000);
   if (error) return toast(error.message);
   creators = (data || []).map(c => ({ ...c, slots: (c.slots || []).sort((a, b) => a.slot_no - b.slot_no) }));
@@ -461,6 +514,7 @@ async function loadCreators() {
 const linkFor = (c) => `${location.origin}${location.pathname.replace(/team\.html$/, "")}creator.html?t=${c.token}`;
 
 function creatorStage(c) {
+  if (!attending(c)) return "not_attending";
   if (!c.invited_at) return "not_invited";
   if (!c.last_seen_at) return "not_opened";
   if (!c.locked_at) return "not_committed";
@@ -472,8 +526,8 @@ function creatorStage(c) {
   if (st.includes("pending")) return "in_review";
   return "uploading";
 }
-const STAGES_DRAFTS = { all: "All", not_invited: "Not invited", not_opened: "Invited, not opened", not_committed: "Opened, not committed", uploading: "Committed, no upload yet", in_review: "In review", changes: "Changes requested", awaiting_link: "Approved, link missing", complete: "All videos live" };
-const STAGES_LINKS = { all: "All", not_invited: "Not invited", not_opened: "Invited, not opened", not_committed: "Opened, not committed", links_missing: "Committed, links missing", complete: "All videos live" };
+const STAGES_DRAFTS = { all: "All", not_invited: "Not invited", not_opened: "Invited, not opened", not_committed: "Opened, not committed", uploading: "Committed, no upload yet", in_review: "In review", changes: "Changes requested", awaiting_link: "Approved, link missing", complete: "All videos live", not_attending: "Couldn't attend" };
+const STAGES_LINKS = { all: "All", not_invited: "Not invited", not_opened: "Invited, not opened", not_committed: "Opened, not committed", links_missing: "Committed, links missing", complete: "All videos live", not_attending: "Couldn't attend" };
 let STAGES = STAGES_DRAFTS;
 
 function renderCreators() {
@@ -491,7 +545,7 @@ function renderCreators() {
     </div>
     <div class="card scroll-x" style="padding:6px 10px"><table><thead><tr><th>Creator</th><th>Country</th><th>Videos</th><th>Status</th><th>Last opened</th><th></th></tr></thead><tbody>
     ${rows.map(c => `<tr>
-      <td><b>${esc(c.name)}</b><br><span class="small muted">${esc(c.email || "no email")}${c.tiktok_handle ? " · @" + esc(c.tiktok_handle.replace(/^@/, "")) : ""}</span></td>
+      <td><b>${esc(c.name)}</b>${attending(c) ? "" : ` <span class="pill s-empty">Couldn't attend</span>`}<br><span class="small muted">${esc(c.email || "no email")}${c.tiktok_handle ? " · @" + esc(c.tiktok_handle.replace(/^@/, "")) : ""}</span></td>
       <td>${esc(c.country || "")}</td>
       <td>${c.locked_at ? c.video_count : c.video_count ? `<span class="muted">${c.video_count} (unlocked)</span>` : "—"}</td>
       <td><div class="chips">${c.slots.length ? c.slots.map(s => s.status === "posted" && (s.tiktok_url || s.instagram_url)
@@ -502,9 +556,10 @@ function renderCreators() {
       <td class="small muted">${c.last_seen_at ? fmt(c.last_seen_at) : c.invited_at ? "never" : "—"}</td>
       <td><div class="row" style="flex-wrap:nowrap">
         <button class="ghost sm" data-copy="${c.id}">Copy link</button>
-        ${c.email ? `<button class="ghost sm" data-inv="${c.id}">${c.invited_at ? "Resend" : "Invite"}</button>` : ""}
+        ${c.email && attending(c) && !isDone() ? `<button class="ghost sm" data-inv="${c.id}">${c.invited_at ? "Resend" : "Invite"}</button>` : ""}
         ${c.locked_at ? `<button class="ghost sm" data-unlock="${c.id}" title="Let them change their number of videos">Unlock</button>` : ""}
-        <button class="ghost sm danger" data-remove="${c.id}" title="Remove this creator from the campaign">Remove</button>
+        <button class="ghost sm" data-att="${c.id}" title="${attending(c) ? "Stops all emails and reminders for this creator" : "They're going after all"}">${attending(c) ? "Couldn't attend" : "Attending again"}</button>
+        <button class="ghost sm danger" data-remove="${c.id}" title="Delete this creator completely (e.g. added by mistake)">Remove</button>
       </div></td></tr>`).join("") || `<tr><td colspan="6" class="muted center" style="padding:30px">No creators match.</td></tr>`}
     </tbody></table></div>`;
   const qi = document.getElementById("q");
@@ -515,6 +570,14 @@ function renderCreators() {
   pane.querySelectorAll("[data-inv]").forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { const r = await teamApi("invite", { creator_ids: [b.dataset.inv] }); toast(r.sent ? "Invite sent" : "Not sent: " + (r.error || "?"), r.sent ? 2500 : 6000); await loadCreators(); renderCreators(); }
+    catch (e) { toast(e.message); b.disabled = false; }
+  });
+  pane.querySelectorAll("[data-att]").forEach(b => b.onclick = async () => {
+    const c = creators.find(x => x.id === b.dataset.att);
+    const going = !attending(c);
+    if (!going && !confirm(`Mark ${c.name} as couldn't attend?\n\nThey stay in the list, but get no more emails or reminders for ${campaign.name}, and their drafts leave the review queue. When you finish the campaign they get the "we missed you" questionnaire.\n\nYou can undo this any time.`)) return;
+    b.disabled = true;
+    try { await teamApi("set_attendance", { creator_ids: [c.id], attending: going }); c.attendance = going ? "expected" : "not_attending"; toast(going ? `${c.name} is attending again` : `${c.name} marked as couldn't attend`); await loadQueue(); renderShell(); }
     catch (e) { toast(e.message); b.disabled = false; }
   });
   pane.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => {
@@ -571,7 +634,7 @@ function mapRows(rows) {
 
 async function renderSetup() {
   const pane = document.getElementById("pane");
-  const notInvited = creators.filter(c => !c.invited_at && c.email).length;
+  const notInvited = creators.filter(c => !c.invited_at && c.email && attending(c)).length;
   const { data: alerts } = await sb.from("alert_log").select("*").order("sent_at", { ascending: false }).limit(8);
   const { data: fails } = await sb.from("email_log").select("kind, recipient, error, sent_at").eq("ok", false).order("sent_at", { ascending: false }).limit(8);
   pane.innerHTML = `<div class="stack" style="max-width:760px">
@@ -596,10 +659,24 @@ async function renderSetup() {
 
     <section class="card stack"><h2>4 · Reminders to creators</h2>
       <label class="row" style="gap:10px;align-items:flex-start;cursor:pointer;flex-wrap:nowrap">
-        <input type="checkbox" id="rem" ${campaign.reminders_enabled ? "checked" : ""} style="width:20px;height:20px;margin-top:2px;flex:none">
-        <span><b>Send reminders every 6 hours</b><br><span class="small muted">One email per creator listing everything still open: approved videos to post and link, drafts not uploaded yet, and drafts that need a new version. Only during the day (9:00–22:00 ${esc(campaign.timezone || "Asia/Singapore")} time), never within 6 hours of another email from us, and nothing to creators who are only waiting for our review. No CC.</span></span>
+        <input type="checkbox" id="rem" ${campaign.reminders_enabled && !isDone() ? "checked" : ""} ${isDone() ? "disabled" : ""} style="width:20px;height:20px;margin-top:2px;flex:none">
+        <span><b>Send reminders every 6 hours</b><br><span class="small muted">One email per creator listing everything still open: approved videos to post and link, drafts not uploaded yet, and drafts that need a new version. Only during the day (9:00–22:00 ${esc(campaign.timezone || "Asia/Singapore")} time), never within 6 hours of another email from us, and nothing to creators who are only waiting for our review. No CC.${isDone() ? " <b>Off, because this campaign is completed.</b>" : ""}</span></span>
       </label>
       <div class="row"><button class="ghost" id="remPrev">Who would get one right now?</button><span class="small muted" id="remr"></span></div></section>
+
+    <section class="card stack"><h2>5 · Finish campaign</h2>
+      ${isDone() ? `
+      <p class="small" style="margin:0"><b>Completed on ${fmtDay(campaign.completed_at)}.</b> Reminders, Slack/email alerts and uploads are off for ${esc(campaign.name)}. Creators can still paste their last links.</p>
+      <div class="stack" style="gap:8px">
+        <b>Feedback questionnaire</b>
+        <span class="small muted" id="svInfo">Checking…</span>
+        <div class="row"><button id="svSend" disabled>Send questionnaire</button><span class="small muted" id="svr"></span></div>
+        <span class="small muted">People who went get “How was the concert?”, people marked as couldn't attend get “We missed you!”. Sending again only goes to those who haven't answered yet (as a reminder). Answers appear in the <b>Feedback</b> tab.</span>
+      </div>
+      <div><button class="ghost sm" id="reopen">Reopen campaign</button></div>`
+      : `<p class="small muted" style="margin:0">When the concert is over, mark the campaign as completed. This turns off reminders, Slack/email alerts and uploads for ${esc(campaign.name)}, moves it to “Done”, and unlocks the feedback questionnaire. Nothing is deleted, and you can reopen it.</p>
+      <div><button class="ghost" id="finish">Mark ${esc(campaign.name)} as completed</button></div>`}
+    </section>
 
     <section class="card stack"><h2>Team alerts</h2>
       <p class="muted small" style="margin:0">Slack (#live-marketing-notifications) + email. Ivana &amp; Ming: 05:00, 09:00, 13:00 · Anička: 09:00, 13:00, 17:00, 20:00 (Copenhagen time). Extra alert every time 20 more drafts are waiting, to whoever is on shift. Counts all campaigns with drafts on, split by market.</p>
@@ -622,6 +699,35 @@ async function renderSetup() {
     Object.assign(campaign, { name, brief, drafts_enabled });
     toast("Saved"); renderShell();
   };
+  const fin = document.getElementById("finish");
+  if (fin) fin.onclick = async () => {
+    if (!confirm(`Mark ${campaign.name} as completed?\n\n• Reminders to creators stop\n• Slack/email review alerts stop counting this campaign\n• Uploads close (creators can still paste links)\n\nNo emails are sent yet: you'll send the feedback questionnaire as a next step.`)) return;
+    fin.disabled = true;
+    try { await teamApi("complete_campaign", { campaign_id: campaign.id, completed: true }); campaign.completed_at = new Date().toISOString(); campaign.reminders_enabled = false; toast(`${campaign.name} completed`); await refreshAll(); }
+    catch (e) { toast(e.message); fin.disabled = false; }
+  };
+  const reo = document.getElementById("reopen");
+  if (reo) reo.onclick = async () => {
+    if (!confirm(`Reopen ${campaign.name}? Uploads and alerts come back. Reminders stay off until you switch them on again.`)) return;
+    try { await teamApi("complete_campaign", { campaign_id: campaign.id, completed: false }); campaign.completed_at = null; toast("Reopened"); await refreshAll(); }
+    catch (e) { toast(e.message); }
+  };
+  const svSend = document.getElementById("svSend");
+  if (svSend) {
+    teamApi("send_survey", { campaign_id: campaign.id, dry_run: true }).then(r => {
+      const n = r.attended + r.not_attending;
+      document.getElementById("svInfo").innerHTML = n
+        ? `<b>${n}</b> to send: ${r.attended} went, ${r.not_attending} couldn't attend${r.resend ? ` (${r.resend} already got it once, they'll get a reminder)` : ""}. ${r.answered} answered so far.`
+        : `Everyone has answered (${r.answered}). 🎉`;
+      svSend.disabled = !n; svSend.textContent = n ? `Send questionnaire to ${n}` : "Send questionnaire";
+      svSend.onclick = async () => {
+        if (!confirm(`Send the feedback questionnaire to ${n} creator${n === 1 ? "" : "s"} now?`)) return;
+        svSend.disabled = true; document.getElementById("svr").textContent = "Sending…";
+        try { const x = await teamApi("send_survey", { campaign_id: campaign.id }); document.getElementById("svr").textContent = `Sent ${x.sent}${x.failed ? `, ${x.failed} failed: ${x.error || ""}` : ""}`; await loadCreators(); }
+        catch (e) { document.getElementById("svr").textContent = e.message; svSend.disabled = false; }
+      };
+    }).catch(e => { document.getElementById("svInfo").textContent = e.message; });
+  }
   document.getElementById("rem").onchange = async (e) => {
     const on = e.target.checked;
     if (on && !confirm(`Start reminders for ${campaign.name}? The first ones go out within the hour (during ${campaign.name} daytime).`)) { e.target.checked = false; return; }
@@ -650,11 +756,13 @@ async function renderSetup() {
     const fresh = list.filter(r => { if (existing.has(r.email) || seen.has(r.email)) return false; seen.add(r.email); return true; });
     const bad = fresh.filter(r => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email));
     out.innerHTML = `<div class="note small">${list.length} rows read · <b>${fresh.length - bad.length}</b> new · ${list.length - fresh.length} already in the list${bad.length ? ` · ${bad.length} with an invalid email (skipped: ${bad.slice(0, 3).map(b => esc(b.email)).join(", ")}${bad.length > 3 ? "…" : ""})` : ""}</div>
-      ${fresh.length - bad.length ? `<div class="row" style="margin-top:10px"><button id="impgo">Add ${fresh.length - bad.length} creators</button></div>` : ""}`;
+      ${fresh.length - bad.length ? `<label class="row small" style="gap:8px;margin-top:10px;cursor:pointer;flex-wrap:nowrap"><input type="checkbox" id="impout" style="width:18px;height:18px;flex:none"> Mark these creators as <b>couldn't attend</b> (e.g. re-adding people who dropped out, so they still get the "we missed you" questionnaire)</label>
+      <div class="row" style="margin-top:10px"><button id="impgo">Add ${fresh.length - bad.length} creators</button></div>` : ""}`;
     const go = document.getElementById("impgo");
     if (go) go.onclick = async () => {
       go.disabled = true; go.textContent = "Adding…";
-      const rows = fresh.filter(r => !bad.includes(r)).map(r => ({ ...r, campaign_id: campaign.id }));
+      const out = document.getElementById("impout")?.checked;
+      const rows = fresh.filter(r => !bad.includes(r)).map(r => ({ ...r, campaign_id: campaign.id, ...(out ? { attendance: "not_attending", attendance_changed_at: new Date().toISOString() } : {}) }));
       for (let i = 0; i < rows.length; i += 200) {
         const { error } = await sb.from("creators").insert(rows.slice(i, i + 200));
         if (error) { out.innerHTML = `<div class="error">${esc(error.message)}</div>`; return; }

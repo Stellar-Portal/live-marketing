@@ -69,6 +69,74 @@ async function load() {
   }
 }
 
+// ---------- feedback questionnaire (shown once the campaign is marked completed) ----------
+const SURVEY = {
+  attended: {
+    title: "We'd love to hear your honest thoughts! 🫶",
+    intro: "Thank you so much for joining us to see ONE OR EIGHT! Your support means so much to us!! ❤️ Please feel free to share your thoughts openly, your honest feedback will help us make future experiences even better.",
+    q: [
+      { k: "heard_before", label: "Before receiving our invitation, had you heard of ONE OR EIGHT? If yes, how did you discover them?" },
+      { k: "concert", label: "How was your concert experience? Was there anything that stood out compared to other concerts you've attended? And did any of the boys steal your heart?" },
+      { k: "following", label: "Since the concert, have you started following ONE OR EIGHT on social media or listening to their music? Do you see yourself continuing to support them?" },
+      { k: "stellar", label: "How was your overall experience working with Stellar? Was everything clear and easy to follow, from the invitation and ticket arrangements to the content submission process?" },
+      { k: "better", label: "Was there anything we could have done better to make the experience smoother or more enjoyable for you?" },
+      { k: "future", label: "Would you be interested in joining similar opportunities with ONE OR EIGHT in the future? And what kind of experiences would excite you most?" },
+    ],
+  },
+  not_attending: {
+    title: "We missed you at the concert! 🥲",
+    intro: "No worries at all! We'd just love to understand what got in the way, so we can make it easier for you next time. It only takes 2 minutes.",
+    q: [
+      { k: "reason", label: "How come you couldn't make it to the concert?" },
+      { k: "easier", label: "What would have made it easier for you to go?" },
+      { k: "prevented", label: "Was there anything in particular you were expecting that ended up keeping you from going?" },
+      { k: "future", type: "choice", options: ["Yes", "Maybe", "No"], label: "Would you like to join future Stellar campaigns?" },
+      { k: "other", label: "Anything else you'd like to tell us?" },
+    ],
+  },
+};
+
+function surveyCard() {
+  const sv = state.survey;
+  if (!sv?.open) return "";
+  if (sv.submitted) return `<div class="card stack center" style="padding:28px 20px"><h2>Thank you so much!! 💙</h2><p class="muted" style="margin:0">We got your feedback. It really helps us make the next campaign even better.</p></div>`;
+  const def = SURVEY[sv.kind];
+  const field = (q) => q.type === "rating"
+    ? `<div class="choice rating" style="grid-template-columns:repeat(5,1fr)">${[1,2,3,4,5].map(n => `<button type="button" data-rate="${n}">${n}<span>${n === 1 ? "Poor" : n === 5 ? "Amazing" : ""}&nbsp;</span></button>`).join("")}</div>`
+    : q.type === "choice"
+    ? `<div class="choice" style="grid-template-columns:repeat(${q.options.length},1fr)">${q.options.map(o => `<button type="button" data-opt="${q.k}" data-val="${o}">${o}</button>`).join("")}</div>`
+    : `<textarea name="${q.k}" rows="3" maxlength="3000"></textarea>`;
+  return `<form class="card stack" id="survey">
+    <div><h2>${def.title}</h2><p class="muted small" style="margin:4px 0 0">${def.intro}</p></div>
+    ${def.q.map(q => `<div class="stack" style="gap:8px"><label class="small"><b>${q.label}</b></label>${field(q)}</div>`).join("")}
+    <button type="submit" style="width:100%;justify-content:center">Send my feedback</button>
+    <div id="surveyErr"></div></form>`;
+}
+
+function bindSurvey() {
+  const f = document.getElementById("survey");
+  if (!f) return;
+  const picked = {};
+  f.querySelectorAll("[data-rate]").forEach(b => b.onclick = () => {
+    picked.rating = Number(b.dataset.rate);
+    f.querySelectorAll("[data-rate]").forEach(x => x.classList.toggle("sel", x === b));
+  });
+  f.querySelectorAll("[data-opt]").forEach(b => b.onclick = () => {
+    picked[b.dataset.opt] = b.dataset.val;
+    f.querySelectorAll(`[data-opt="${b.dataset.opt}"]`).forEach(x => x.classList.toggle("sel", x === b));
+  });
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const answers = { ...picked };
+    f.querySelectorAll("textarea").forEach(t => { if (t.value.trim()) answers[t.name] = t.value.trim(); });
+    const err = document.getElementById("surveyErr");
+    if (!Object.keys(answers).length) { err.innerHTML = `<div class="error small">Please answer at least one question.</div>`; return; }
+    const btn = f.querySelector('button[type="submit"]'); btn.disabled = true; btn.textContent = "Sending…";
+    try { await api("submit_survey", { answers }); toast("Thank you!"); await load(); window.scrollTo(0, 0); }
+    catch (x) { err.innerHTML = `<div class="error small">${esc(x.message)}</div>`; btn.disabled = false; btn.textContent = "Send my feedback"; }
+  };
+}
+
 const STATUS_LABEL = {
   empty: "Not uploaded", pending: "Waiting for review", changes_requested: "Changes requested",
   approved: "Approved", posted: "Live",
@@ -80,7 +148,15 @@ function render() {
   let html = `<header class="top">
       <h1>Hi ${first}</h1>
     </header>`;
-  if (campaign.brief) html += `<div class="brief">${esc(campaign.brief)}</div>`;
+  // couldn't attend: no more videos needed, only the questionnaire once the campaign is done
+  if (creator.attendance === "not_attending") {
+    html += state.survey?.open ? surveyCard()
+      : `<div class="card stack"><h2>No worries! 🤭</h2><p class="muted" style="margin:0">We've noted that you can't make it to the concert, so there's nothing more to send. If that's a mistake, just reply to our email!</p></div>`;
+    app.innerHTML = html; bindSurvey(); return;
+  }
+  html += surveyCard();
+  if (campaign.completed && !creator.locked) { app.innerHTML = html; bindSurvey(); return; }
+  if (campaign.brief && !campaign.completed) html += `<div class="brief">${esc(campaign.brief)}</div>`;
 
   if (!creator.locked) {
     html += `<div class="card stack">
@@ -122,7 +198,7 @@ function render() {
   html += `<div class="slots">` + slots.map(slotCard).join("") + `</div>`;
   html += `<p class="muted small center" style="margin-top:32px">Questions? Reply to the email you got from us.<br>This page is personal to you, so please don't share the link.</p>`;
   app.innerHTML = html;
-  bindSlots();
+  bindSlots(); bindSurvey();
 }
 
 
@@ -163,6 +239,8 @@ function slotCard(s) {
         <div class="row spread small"><span class="muted">Keep this page open while it uploads.</span><b id="pct${n}">${up.pct}%</b></div>
         <div class="progress"><i id="bar${n}" style="width:${up.pct}%"></i></div>
         <div><button class="ghost sm" data-cancel="${n}">Cancel</button></div></div>`;
+    } else if (state.campaign.completed && (s.status === "empty" || s.status === "changes_requested" || s.status === "pending")) {
+      body = `<p class="muted small" style="margin:0">This campaign has finished, so uploads are closed.</p>`;
     } else if (s.status === "empty" || s.status === "changes_requested") {
       if (s.status === "changes_requested" && last?.feedback) {
         body += `<div class="feedback"><div class="small" style="font-weight:600;margin-bottom:4px">Feedback from Stellar</div>${esc(last.feedback)}</div>`;
