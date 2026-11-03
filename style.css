@@ -142,3 +142,8 @@ form.links label input { display: block; width: 100%; margin-top: 4px; }
 /* destructive action */
 button.ghost.danger { color: #c4271b; }
 button.ghost.danger:hover { border-color: #c4271b; }
+
+/* feedback questionnaire */
+#survey .choice button { font-size: 18px; padding: 12px 6px; }
+#survey .choice.rating button { font-size: 22px; }
+#survey textarea { min-height: 72px; }
