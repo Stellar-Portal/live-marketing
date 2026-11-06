@@ -678,8 +678,8 @@ async function renderSetup() {
       <div class="stack" style="gap:8px">
         <b>Feedback questionnaire</b>
         <span class="small muted" id="svInfo">Checking…</span>
-        <div class="row"><button id="svSend" disabled>Send questionnaire</button><span class="small muted" id="svr"></span></div>
-        <span class="small muted">People who went get “How was the concert?”, people marked as couldn't attend get “We missed you!”. Sending again only goes to those who haven't answered yet (as a reminder). Answers appear in the <b>Feedback</b> tab.</span>
+        <div class="row"><button id="svNew" disabled>Send to people who haven't had it</button><button class="ghost" id="svSend" disabled>Send reminder</button><span class="small muted" id="svr"></span></div>
+        <span class="small muted">People who went get “How was the concert?”, people marked as couldn't attend get “We missed you!”. <b>Send to people who haven't had it</b> only emails people who never got it (e.g. creators added later). <b>Send reminder</b> re-sends to everyone who hasn't answered yet. Answers appear in the <b>Feedback</b> tab.</span>
       </div>
       <div><button class="ghost sm" id="reopen">Reopen campaign</button></div>`
       : `<p class="small muted" style="margin:0">When the concert is over, mark the campaign as completed. This turns off reminders, Slack/email alerts and uploads for ${esc(campaign.name)}, moves it to “Done”, and unlocks the feedback questionnaire. Nothing is deleted, and you can reopen it.</p>
@@ -722,18 +722,22 @@ async function renderSetup() {
   };
   const svSend = document.getElementById("svSend");
   if (svSend) {
+    const svNew = document.getElementById("svNew");
     teamApi("send_survey", { campaign_id: campaign.id, dry_run: true }).then(r => {
       const n = r.attended + r.not_attending;
       document.getElementById("svInfo").innerHTML = n
-        ? `<b>${n}</b> to send: ${r.attended} went, ${r.not_attending} couldn't attend${r.resend ? ` (${r.resend} already got it once, they'll get a reminder)` : ""}. ${r.answered} answered so far.`
+        ? `<b>${r.answered}</b> answered so far. <b>${r.new}</b> never got it yet, <b>${r.resend}</b> got it but haven't answered.`
         : `Everyone has answered (${r.answered}). 🎉`;
-      svSend.disabled = !n; svSend.textContent = n ? `Send questionnaire to ${n}` : "Send questionnaire";
-      svSend.onclick = async () => {
-        if (!confirm(`Send the feedback questionnaire to ${n} creator${n === 1 ? "" : "s"} now?`)) return;
-        svSend.disabled = true; document.getElementById("svr").textContent = "Sending…";
-        try { const x = await teamApi("send_survey", { campaign_id: campaign.id }); document.getElementById("svr").textContent = `Sent ${x.sent}${x.failed ? `, ${x.failed} failed: ${x.error || ""}` : ""}`; await loadCreators(); }
-        catch (e) { document.getElementById("svr").textContent = e.message; svSend.disabled = false; }
+      svNew.disabled = !r.new; svNew.textContent = r.new ? `Send to ${r.new} who haven't had it` : "Everyone has had it";
+      svSend.disabled = !n; svSend.textContent = n ? `Send reminder to ${n}` : "Send reminder";
+      const go = async (btn, onlyNew, count) => {
+        if (!confirm(onlyNew ? `Send the questionnaire to the ${count} people who haven't had it yet?` : `Send the questionnaire to all ${count} people who haven't answered yet?\n(Those who already got it see it as a reminder.)`)) return;
+        svNew.disabled = svSend.disabled = true; document.getElementById("svr").textContent = "Sending…";
+        try { const x = await teamApi("send_survey", { campaign_id: campaign.id, only_new: onlyNew }); document.getElementById("svr").textContent = `Sent ${x.sent}${x.failed ? `, ${x.failed} failed: ${x.error || ""}` : ""}`; await loadCreators(); }
+        catch (e) { document.getElementById("svr").textContent = e.message; btn.disabled = false; }
       };
+      svNew.onclick = () => go(svNew, true, r.new);
+      svSend.onclick = () => go(svSend, false, n);
     }).catch(e => { document.getElementById("svInfo").textContent = e.message; });
   }
   document.getElementById("rem").onchange = async (e) => {
