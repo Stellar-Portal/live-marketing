@@ -210,11 +210,12 @@ function renderShell() {
   const TABS = [
     on ? ["review", "Review queue", s.pending] : null,
     ["links", "Posted links", s.live],
-    ["creators", "Creators", s.all],
+    ["creators", "Creators", s.creators],
+    ["database", "Database", s.all],
     isDone() ? ["feedback", "Feedback", feedbackCount] : null,
     ["setup", "Setup", null],
   ].filter(Boolean);
-  const ICON = { review: `<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M10 9l5 2.5-5 2.5z"/></svg>`, links: `<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>`, creators: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/></svg>`, feedback: `<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>`, setup: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>` };
+  const ICON = { review: `<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M10 9l5 2.5-5 2.5z"/></svg>`, links: `<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>`, creators: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/></svg>`, database: `<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>`, feedback: `<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>`, setup: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>` };
   const title = (TABS.find(t => t[0] === tab) || TABS[0])[1];
   app.innerHTML = `
     <aside class="sidebar">
@@ -258,7 +259,7 @@ function renderShell() {
   if (!campaign) return;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; renderShell(); });
   if (tab === "feedback" && !isDone()) tab = "setup";
-  if (tab === "review") renderReview(); else if (tab === "links") renderLinks(); else if (tab === "creators") renderCreators(); else if (tab === "feedback") renderFeedback(); else renderSetup();
+  if (tab === "review") renderReview(); else if (tab === "links") renderLinks(); else if (tab === "creators" || tab === "database") renderCreators(); else if (tab === "feedback") renderFeedback(); else renderSetup();
 }
 
 // ---------- posted links (for copying into the external dashboard) ----------
@@ -530,17 +531,24 @@ const STAGES_DRAFTS = { all: "All", not_invited: "Not invited", not_opened: "Inv
 const STAGES_LINKS = { all: "All", not_invited: "Not invited", not_opened: "Invited, not opened", not_committed: "Opened, not committed", links_missing: "Committed, links missing", complete: "All videos live", not_attending: "Couldn't attend" };
 let STAGES = STAGES_DRAFTS;
 
+// "Creators" = the campaign list (people still going); "Database" = everyone ever added to this campaign
 function renderCreators() {
+  const db = tab === "database";
   STAGES = draftsOn() ? STAGES_DRAFTS : STAGES_LINKS;
+  if (!db) { const { not_attending, ...rest } = STAGES; STAGES = rest; }
   if (!STAGES[filter.s]) filter.s = "all";
   const pane = document.getElementById("pane");
   const q = filter.q.toLowerCase();
-  const rows = creators.filter(c => (filter.s === "all" || creatorStage(c) === filter.s) &&
+  const pool = db ? creators : creators.filter(attending);
+  const rows = pool.filter(c => (filter.s === "all" || creatorStage(c) === filter.s) &&
     (!q || [c.name, c.email, c.tiktok_handle, c.country].some(x => (x || "").toLowerCase().includes(q))));
-  const counts = {}; creators.forEach(c => { const s = creatorStage(c); counts[s] = (counts[s] || 0) + 1; });
-  pane.innerHTML = `<div class="row" style="margin-bottom:12px">
+  const counts = {}; pool.forEach(c => { const s = creatorStage(c); counts[s] = (counts[s] || 0) + 1; });
+  pane.innerHTML = `<p class="small muted" style="margin:0 0 12px">${db
+      ? `Everyone ever added to ${esc(campaign.name)}, including people who couldn't attend. Use <b>Back to campaign</b> to move someone back onto the list, or <b>Remove</b> to delete someone added by mistake.`
+      : `Everyone still taking part in ${esc(campaign.name)}. People marked <b>Couldn't attend</b> leave this list (no more emails or reminders) but stay in the <b>Database</b> tab.`}</p>
+    <div class="row" style="margin-bottom:12px">
       <input type="text" id="q" placeholder="Search name, email, handle, country" value="${esc(filter.q)}" style="max-width:320px">
-      <select id="s" style="max-width:260px">${Object.entries(STAGES).map(([k, v]) => `<option value="${k}" ${filter.s === k ? "selected" : ""}>${v}${k === "all" ? ` (${creators.length})` : ` (${counts[k] || 0})`}</option>`).join("")}</select>
+      <select id="s" style="max-width:260px">${Object.entries(STAGES).map(([k, v]) => `<option value="${k}" ${filter.s === k ? "selected" : ""}>${v}${k === "all" ? ` (${pool.length})` : ` (${counts[k] || 0})`}</option>`).join("")}</select>
       <button class="ghost sm" id="csv">Export CSV</button>
     </div>
     <div class="card scroll-x" style="padding:6px 10px"><table><thead><tr><th>Creator</th><th>Country</th><th>Videos</th><th>Status</th><th>Last opened</th><th></th></tr></thead><tbody>
@@ -558,8 +566,8 @@ function renderCreators() {
         <button class="ghost sm" data-copy="${c.id}">Copy link</button>
         ${c.email && attending(c) && !isDone() ? `<button class="ghost sm" data-inv="${c.id}">${c.invited_at ? "Resend" : "Invite"}</button>` : ""}
         ${c.locked_at ? `<button class="ghost sm" data-unlock="${c.id}" title="Let them change their number of videos">Unlock</button>` : ""}
-        <button class="ghost sm" data-att="${c.id}" title="${attending(c) ? "Stops all emails and reminders for this creator" : "They're going after all"}">${attending(c) ? "Couldn't attend" : "Attending again"}</button>
-        <button class="ghost sm danger" data-remove="${c.id}" title="Delete this creator completely (e.g. added by mistake)">Remove</button>
+        <button class="ghost sm" data-att="${c.id}" title="${attending(c) ? "Stops all emails and reminders for this creator" : "They're going after all"}">${attending(c) ? "Couldn't attend" : "Back to campaign"}</button>
+        ${db ? `<button class="ghost sm danger" data-remove="${c.id}" title="Delete this creator completely (e.g. added by mistake)">Remove</button>` : ""}
       </div></td></tr>`).join("") || `<tr><td colspan="6" class="muted center" style="padding:30px">No creators match.</td></tr>`}
     </tbody></table></div>`;
   const qi = document.getElementById("q");
@@ -575,9 +583,9 @@ function renderCreators() {
   pane.querySelectorAll("[data-att]").forEach(b => b.onclick = async () => {
     const c = creators.find(x => x.id === b.dataset.att);
     const going = !attending(c);
-    if (!going && !confirm(`Mark ${c.name} as couldn't attend?\n\nThey stay in the list, but get no more emails or reminders for ${campaign.name}, and their drafts leave the review queue. When you finish the campaign they get the "we missed you" questionnaire.\n\nYou can undo this any time.`)) return;
+    if (!going && !confirm(`Mark ${c.name} as couldn't attend?\n\nThey leave the campaign list (they stay in the Database tab) and get no more emails or reminders for ${campaign.name}, and their drafts leave the review queue. When you finish the campaign they get the "we missed you" questionnaire.\n\nYou can undo this any time.`)) return;
     b.disabled = true;
-    try { await teamApi("set_attendance", { creator_ids: [c.id], attending: going }); c.attendance = going ? "expected" : "not_attending"; toast(going ? `${c.name} is attending again` : `${c.name} marked as couldn't attend`); await loadQueue(); renderShell(); }
+    try { await teamApi("set_attendance", { creator_ids: [c.id], attending: going }); c.attendance = going ? "expected" : "not_attending"; toast(going ? `${c.name} is back on the campaign list` : `${c.name} moved to the Database (couldn't attend)`); await loadQueue(); renderShell(); }
     catch (e) { toast(e.message); b.disabled = false; }
   });
   pane.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => {
